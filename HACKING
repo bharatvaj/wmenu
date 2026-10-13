@@ -111,8 +111,10 @@ Known simplifications
   not score-ranked). No silent row cap. LB_SETCOUNT is wrapped with redraw
   suppression: unchanged visible rows are not invalidated as the row count
   grows; only newly visible rows are, and those are painted immediately so
-  queued stream messages cannot starve WM_PAINT. The bottom bar shows search
-  progress after stdin completes.
+  queued stream messages cannot starve WM_PAINT. Restore the selection and
+  top row after LB_SETCOUNT (Windows can otherwise jump to the end), and
+  preserve pending selection paints when validating the viewport. The bottom
+  bar shows search progress after stdin completes.
 - lnav inspiration: its logfile index tracks lines separately from the view
   (https://github.com/tstack/lnav/blob/master/src/logfile.hh, lf_index and
   read_line); its text view requests counts and rows from a text sub-source

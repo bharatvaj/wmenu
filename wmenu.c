@@ -141,24 +141,29 @@ static void update_count(void)
     int selected = (int)SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0);
     int top = (int)SendMessageW(list_hwnd, LB_GETTOPINDEX, 0, 0);
     int height = (int)SendMessageW(list_hwnd, LB_GETITEMHEIGHT, 0, 0);
-    RECT client;
+    RECT client, pending;
+    bool had_pending = GetUpdateRect(list_hwnd, &pending, FALSE) && !IsRectEmpty(&pending);
     GetClientRect(list_hwnd, &client);
     SendMessageW(list_hwnd, WM_SETREDRAW, FALSE, 0);
     SendMessageW(list_hwnd, LB_SETCOUNT, count, 0);
-    if (count && selected < 0) SendMessageW(list_hwnd, LB_SETCURSEL, 0, 0);
+    if (count) {
+        SendMessageW(list_hwnd, LB_SETCURSEL, selected >= 0 && selected < count ? selected : 0, 0);
+        if (top > 0 || SendMessageW(list_hwnd, LB_GETTOPINDEX, 0, 0) != 0)
+            SendMessageW(list_hwnd, LB_SETTOPINDEX, top < count ? top : count - 1, 0);
+    }
     SendMessageW(list_hwnd, WM_SETREDRAW, TRUE, 0);
     /* LB_SETCOUNT may invalidate everything. Only newly visible rows need paint. */
     RedrawWindow(list_hwnd, NULL, NULL, RDW_VALIDATE | RDW_NOCHILDREN);
     int new_top = (int)SendMessageW(list_hwnd, LB_GETTOPINDEX, 0, 0);
     if (top != new_top || count < old_count || height <= 0) {
         InvalidateRect(list_hwnd, NULL, FALSE);
-        UpdateWindow(list_hwnd);
     } else if (old_count < new_top + (client.bottom - client.top + height - 1) / height) {
         client.top += (old_count - new_top) * height;
         if (client.top < 0) client.top = 0;
         InvalidateRect(list_hwnd, &client, FALSE);
-        UpdateWindow(list_hwnd); /* Posted stream messages must not starve WM_PAINT. */
     }
+    if (had_pending) InvalidateRect(list_hwnd, &pending, FALSE);
+    UpdateWindow(list_hwnd); /* Do not starve new rows or selection paints. */
 }
 
 static void update_progress(void)
@@ -271,12 +276,20 @@ static void list_move(int delta)
     if (!has_items) return;
     LRESULT count = SendMessageW(list_hwnd, LB_GETCOUNT, 0, 0);
     LRESULT cur = SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0);
+    LRESULT previous = cur;
     if (count <= 0) return;
     if (cur < 0) cur = delta > 0 ? -1 : count;
     cur += delta;
     if (cur < 0) cur = 0;
     if (cur >= count) cur = count - 1;
+    if (cur == previous) return;
     SendMessageW(list_hwnd, LB_SETCURSEL, cur, 0);
+    RECT rect;
+    if (previous >= 0 && SendMessageW(list_hwnd, LB_GETITEMRECT, previous, (LPARAM)&rect) != LB_ERR)
+        InvalidateRect(list_hwnd, &rect, FALSE);
+    if (SendMessageW(list_hwnd, LB_GETITEMRECT, cur, (LPARAM)&rect) != LB_ERR)
+        InvalidateRect(list_hwnd, &rect, FALSE);
+    UpdateWindow(list_hwnd);
 }
 
 static void edit_key(WORD key) { SendMessageW(input_hwnd, WM_KEYDOWN, key, 0); }
@@ -455,7 +468,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_DRAWITEM: {
         DRAWITEMSTRUCT *draw = (DRAWITEMSTRUCT *)lp;
         if (draw->CtlID != ID_COMBO || draw->itemID == (UINT)-1) break;
-        bool selected_row = (draw->itemState & ODS_SELECTED) != 0;
+        bool selected_row = (int)draw->itemID == (int)SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0);
         FillRect(draw->hDC, &draw->rcItem,
                  GetSysColorBrush(selected_row ? COLOR_HIGHLIGHT : COLOR_WINDOW));
         EnterCriticalSection(&items_lock);

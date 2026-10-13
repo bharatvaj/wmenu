@@ -4,9 +4,14 @@
 #include <assert.h>
 
 static int draw_calls;
+static bool painted_selected[16];
 static LRESULT CALLBACK TestWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
-    if (msg == WM_DRAWITEM) ++draw_calls;
+    if (msg == WM_DRAWITEM) {
+        DRAWITEMSTRUCT *draw = (DRAWITEMSTRUCT *)lp;
+        ++draw_calls;
+        if (draw->itemID < 16) painted_selected[draw->itemID] = (draw->itemState & ODS_SELECTED) != 0;
+    }
     return WndProc(hwnd, msg, wp, lp);
 }
 
@@ -55,6 +60,18 @@ int main(int argc, char **argv)
     }
     refill_list("");
     assert(SendMessageW(list_hwnd, LB_GETCOUNT, 0, 0) == 60000);
+    SendMessageW(list_hwnd, LB_SETCURSEL, 0, 0);
+    UpdateWindow(list_hwnd);
+    list_move(5);
+    add_item("extra-row");
+    refill_list(""); /* Count update before the selection's WM_PAINT. */
+    UpdateWindow(list_hwnd);
+    assert(SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0) == 5);
+    assert(SendMessageW(list_hwnd, LB_GETTOPINDEX, 0, 0) == 0);
+    assert(!painted_selected[0] && painted_selected[5]);
+    list_move(-5);
+    assert(SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0) == 0);
+    assert(painted_selected[0] && !painted_selected[5]);
     SendMessageW(list_hwnd, LB_SETCURSEL, 59999, 0);
     char *last = current_text();
     assert(last && !strncmp(last, "item-59999", 10));
@@ -92,14 +109,18 @@ int main(int argc, char **argv)
     DeleteDC(dc);
     ReleaseDC(NULL, screen);
     refill_list("");
-    assert(SendMessageW(list_hwnd, LB_GETCOUNT, 0, 0) == 60000);
+    assert(SendMessageW(list_hwnd, LB_GETCOUNT, 0, 0) == 60001);
     ShowWindow(main_hwnd, SW_SHOWNOACTIVATE);
     ShowWindow(list_hwnd, SW_SHOWNOACTIVATE);
     UpdateWindow(list_hwnd);
     assert(!GetUpdateRect(list_hwnd, NULL, FALSE));
+    SendMessageW(list_hwnd, LB_SETCURSEL, 59999, 0);
+    int kept_top = (int)SendMessageW(list_hwnd, LB_GETTOPINDEX, 0, 0);
     add_item("item-60000");
     refill_list("");
-    assert(SendMessageW(list_hwnd, LB_GETCOUNT, 0, 0) == 60001);
+    assert(SendMessageW(list_hwnd, LB_GETCOUNT, 0, 0) == 60002);
+    assert(SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0) == 59999);
+    assert(SendMessageW(list_hwnd, LB_GETTOPINDEX, 0, 0) == kept_top);
     RECT dirty;
     assert(!GetUpdateRect(list_hwnd, &dirty, FALSE) || IsRectEmpty(&dirty));
     /* Count/scrollbar may update, but the existing client rows stay untouched. */
@@ -108,7 +129,7 @@ int main(int argc, char **argv)
     input_done = false;
     add_item("tail-special");
     while (search_pos < item_count) search_step();
-    assert(match_count == 1 && matches[0] == 60001);
+    assert(match_count == 1 && matches[0] == 60002);
     input_done = true;
     update_progress();
     assert(SendMessageW(list_hwnd, LB_GETCOUNT, 0, 0) == 1);
