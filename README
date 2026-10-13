@@ -27,7 +27,7 @@ Useful flags:
 -e utf8|ansi|oem    stdin/stdout/prompt encoding; default utf8
 -x px -y px -w px   position and width
 -c                  center window
--l lines            visible list lines (capped to screen height)
+-l lines            visible list lines; -l-1 fills the screen (default 5)
 -m                  select multiple entries; Ctrl+Enter adds one
 -V                  enable vi support; Ctrl+Alt+V toggles vi mode
 -d                  use normal Windows edit shortcuts instead of emacs-ish keys

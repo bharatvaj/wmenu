@@ -771,6 +771,7 @@ static int fit_lines(int requested, int screen_height)
     int row_height = S(22);
     int fit = row_height > 0 && screen_height > S(28) ? (screen_height - S(28)) / row_height : 1;
     if (fit < 1) fit = 1;
+    if (requested == -1) return fit;
     if (requested < 1) requested = 5;
     return requested < fit ? requested : fit;
 }
