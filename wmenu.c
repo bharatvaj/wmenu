@@ -42,7 +42,7 @@ static struct location locations[LOCATION_LIMIT];
 static int location_count, location_cursor, last_row = -1, pending_item = -1;
 static bool restoring_location, search_posted;
 static volatile LONG refresh_pending;
-static bool has_items, has_prompt, multi_select, vi_mode, normal_mode, default_controls;
+static bool has_items, has_prompt, multi_select, vi_mode, normal_mode, default_controls, ignore_case;
 static wchar_t prompt[300];
 static HWND main_hwnd, input_hwnd, list_hwnd, progress_hwnd;
 static WNDPROC old_input_proc, old_list_proc;
@@ -188,6 +188,7 @@ static bool has_match(const char *query, const char *line)
 {
     while (*query) {
         unsigned char ch = (unsigned char)*query++;
+        if (ignore_case && ch >= 'A' && ch <= 'Z') ch = ch - 'A' + 'a';
         unsigned char upper = ch >= 'a' && ch <= 'z' ? ch - 'a' + 'A' : ch;
         while (*line && (unsigned char)*line != ch && (unsigned char)*line != upper) ++line;
         if (!*line) return false;
@@ -839,7 +840,7 @@ int main(int argc, char **argv)
     case 'V': vi_mode = true; break;
     case 'd': default_controls = true; break;
     case 'b': close_on_blur = true; break;
-    case 'i': break;
+    case 'i': ignore_case = true; break;
     default: usage(); return 1;
     } ARGEND;
 

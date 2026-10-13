@@ -13,8 +13,9 @@ Build
 Dependencies
 ------------
 No external source dependencies. The byte-safe subsequence matcher lives in
-wmenu.c; ASCII matching retains fzy's old behavior, while non-ASCII UTF-8
-bytes are compared literally.
+wmenu.c; ASCII matching retains fzy's smart-case behavior by default, and
+-i forces ASCII case-insensitive matching. Non-ASCII UTF-8 bytes compare
+literally.
 
 Program shape
 -------------
