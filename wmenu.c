@@ -477,7 +477,12 @@ static void add_selection(void)
     selected = grown;
     selected[selected_count++] = s;
     SetWindowTextW(input_hwnd, L"");
-    if (has_items) refill_list("");
+    if (has_items) {
+        refill_list("");
+        SendMessageW(list_hwnd, LB_SETCURSEL, -1, 0);
+        last_row = -1;
+        UpdateWindow(list_hwnd);
+    }
 }
 
 static void finish(void)

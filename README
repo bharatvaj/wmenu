@@ -28,7 +28,7 @@ Useful flags:
 -x px -y px -w px   position and width
 -c                  center window
 -l lines            visible list lines; -l-1 fills the screen (default 5)
--m                  select multiple entries; Ctrl+Enter adds one
+-m                  select multiple entries; Ctrl+Enter adds one, Enter finishes
 -i                  ignore ASCII case while matching
 -V                  enable vi support; Ctrl+Alt+V toggles vi mode
 -d                  use normal Windows edit shortcuts instead of emacs-ish keys

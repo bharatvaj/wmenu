@@ -254,6 +254,14 @@ int main(int argc, char **argv)
     SetWindowTextW(input_hwnd, L"\x00e9"); /* UTF-8 edit text goes through the search path. */
     while (search_pos < loaded_count()) search_step();
     assert(match_count == 1 && matches[0] == 60003);
+    add_selection();
+    assert(selected_count == 1 && !strcmp(selected[0], "caf\xc3\xa9"));
+    assert(SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0) == LB_ERR);
+    char *after_add = current_text();
+    assert(after_add && !*after_add); /* Enter would output only added rows. */
+    free(after_add);
+    list_move(1);
+    assert(SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0) == 0);
     DeleteFiber(search_fiber);
     ConvertFiberToThread();
     DestroyWindow(main_hwnd);
