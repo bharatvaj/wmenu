@@ -46,7 +46,7 @@ Default keys:
 
 ```
 Enter       print selection and exit
-Esc         exit
+Esc         exit (vi insert mode: return to normal mode)
 Up/Down     move list selection
 Ctrl+N/P    next/previous item
 Ctrl+D/U    page down/up

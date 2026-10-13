@@ -61,7 +61,7 @@ Default mode is emacs-ish, but pragmatic:
 - Ctrl+D / Ctrl+U: page down/up list
 - Ctrl+W: cut selection
 - Ctrl+Alt+V: toggle vi mode
-- Esc: exit
+- Esc: exit, except in vi insert mode where it returns to normal mode
 
 Use -default-controls for normal Windows edit behavior.
 
@@ -80,7 +80,8 @@ Release checklist
 3. Check a slow pipe shows the bottom progress bar animating; search a loaded
    large file and check the same bar shows search progress.
 4. Check Alt-Tab back focuses the input.
-5. Check Esc exits from input and list focus.
+5. Check Esc exits from input and list focus; in vi insert mode it returns to
+   normal mode instead.
 6. Update the version string in wmenu.c.
 7. Do not commit build outputs (*.obj, *.exe) unless intentionally packaging.
 

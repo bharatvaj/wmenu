@@ -77,6 +77,15 @@ int main(int argc, char **argv)
     UpdateWindow(list_hwnd);
     assert(SendMessageW(list_hwnd, LB_GETCOUNT, 0, 0) == 1);
     assert(draw_calls > 0); /* First streamed row must actually paint. */
+    vi_mode = true;
+    normal_mode = false;
+    assert(InputProc(input_hwnd, WM_KEYDOWN, VK_ESCAPE, 0) == 0 && normal_mode);
+    MSG quit;
+    assert(!PeekMessageW(&quit, NULL, WM_QUIT, WM_QUIT, PM_NOREMOVE));
+    normal_mode = false;
+    assert(ListProc(list_hwnd, WM_KEYDOWN, VK_ESCAPE, 0) == 0 && normal_mode);
+    assert(!PeekMessageW(&quit, NULL, WM_QUIT, WM_QUIT, PM_NOREMOVE));
+    vi_mode = normal_mode = false;
     for (int i = 1; i < 60000; ++i) {
         char buf[2700];
         sprintf(buf, "item-%d", i);

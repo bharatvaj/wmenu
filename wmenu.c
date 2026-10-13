@@ -574,7 +574,11 @@ static bool handle_global_keys(WORD key, struct key_state k)
     if (k.ctrl && key == 'I') { visit_location(1); return true; }
     if (k.ctrl && key == VK_RETURN && multi_select) { add_selection(); return true; }
     if (key == VK_RETURN) { finish(); return true; }
-    if (key == VK_ESCAPE) { PostQuitMessage(0); return true; }
+    if (key == VK_ESCAPE) {
+        if (vi_mode && !normal_mode) normal_mode = true;
+        else PostQuitMessage(0);
+        return true;
+    }
     if (key == VK_DOWN) { list_move(1); return true; }
     if (key == VK_UP) { list_move(-1); return true; }
     return false;
@@ -645,7 +649,7 @@ static LRESULT CALLBACK InputProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 static LRESULT CALLBACK ListProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     if (msg == WM_KEYDOWN) {
-        if (wp == VK_ESCAPE) { PostQuitMessage(0); return 0; }
+        if (wp == VK_ESCAPE) { handle_global_keys(VK_ESCAPE, key_state()); return 0; }
         if (wp == VK_RETURN) { finish(); return 0; }
     }
     LRESULT r = CallWindowProcW(old_list_proc, hwnd, msg, wp, lp);
