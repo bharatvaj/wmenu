@@ -121,6 +121,8 @@ static DWORD WINAPI read_stdin_thread(void *unused)
 }
 
 struct ranked_item { int index; score_t score; };
+static int displayed[LIST_LIMIT], displayed_count;
+static bool displayed_filtered;
 
 static int rank_cmp(const void *a, const void *b)
 {
@@ -131,15 +133,33 @@ static int rank_cmp(const void *a, const void *b)
 static void refill_list(const char *query)
 {
     struct ranked_item ranked[LIST_LIMIT];
-    int n = 0;
-    SendMessageW(list_hwnd, LB_RESETCONTENT, 0, 0);
+    int n = 0, old_selection = (int)SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0);
+    int old_item = old_selection >= 0 && old_selection < displayed_count ? displayed[old_selection] : -1;
+    int old_top = (int)SendMessageW(list_hwnd, LB_GETTOPINDEX, 0, 0);
+    bool filtered = query && *query;
+    bool was_filtered = displayed_filtered;
     EnterCriticalSection(&items_lock);
-    if (!query || !*query) {
-        for (int i = 0; i < item_count && n < LIST_LIMIT; ++i) {
+    if (!filtered) {
+        if (was_filtered) {
+            SendMessageW(list_hwnd, WM_SETREDRAW, FALSE, 0);
+            SendMessageW(list_hwnd, LB_RESETCONTENT, 0, 0);
+            displayed_count = 0;
+            displayed_filtered = false;
+        }
+        /* Append only new rows. LB_ADDSTRING repaints affected rows itself. */
+        for (int i = displayed_count; i < item_count && i < LIST_LIMIT; ++i) {
             wchar_t *w = widen(items[i]);
             SendMessageW(list_hwnd, LB_ADDSTRING, 0, (LPARAM)w);
+            displayed[displayed_count++] = i;
             free(w);
-            ++n;
+        }
+        if (was_filtered) {
+            SendMessageW(list_hwnd, LB_SETCURSEL,
+                old_item >= 0 && old_item < displayed_count ? old_item : 0, 0);
+            SendMessageW(list_hwnd, WM_SETREDRAW, TRUE, 0);
+            InvalidateRect(list_hwnd, NULL, TRUE);
+        } else if (displayed_count && old_selection < 0) {
+            SendMessageW(list_hwnd, LB_SETCURSEL, 0, 0);
         }
     } else {
         int scan = item_count < SCAN_LIMIT ? item_count : SCAN_LIMIT;
@@ -150,14 +170,30 @@ static void refill_list(const char *query)
             }
         }
         qsort(ranked, n, sizeof(*ranked), rank_cmp);
-        for (int i = 0; i < n; ++i) {
-            wchar_t *w = widen(items[ranked[i].index]);
-            SendMessageW(list_hwnd, LB_ADDSTRING, 0, (LPARAM)w);
-            free(w);
+        bool changed = !displayed_filtered || n != displayed_count;
+        for (int i = 0; !changed && i < n; ++i)
+            if (ranked[i].index != displayed[i]) changed = true;
+        if (changed) {
+            int selection = n ? 0 : -1;
+            SendMessageW(list_hwnd, WM_SETREDRAW, FALSE, 0);
+            SendMessageW(list_hwnd, LB_RESETCONTENT, 0, 0);
+            for (int i = 0; i < n; ++i) {
+                wchar_t *w = widen(items[ranked[i].index]);
+                displayed[i] = ranked[i].index;
+                SendMessageW(list_hwnd, LB_ADDSTRING, 0, (LPARAM)w);
+                if (displayed[i] == old_item) selection = i;
+                free(w);
+            }
+            displayed_count = n;
+            displayed_filtered = true;
+            if (selection >= 0) SendMessageW(list_hwnd, LB_SETCURSEL, selection, 0);
+            if (old_top > 0 && selection >= 0 && old_item >= 0 && displayed[selection] == old_item)
+                SendMessageW(list_hwnd, LB_SETTOPINDEX, old_top, 0);
+            SendMessageW(list_hwnd, WM_SETREDRAW, TRUE, 0);
+            InvalidateRect(list_hwnd, NULL, TRUE);
         }
     }
     LeaveCriticalSection(&items_lock);
-    if (n) SendMessageW(list_hwnd, LB_SETCURSEL, 0, 0);
 }
 
 static char *current_text(void)
@@ -353,7 +389,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         InterlockedExchange(&refresh_pending, 0);
         if (list_hwnd && loading_items) {
             char *q = text_encoded(input_hwnd);
-            refill_list(q);
+            if (q) refill_list(q);
             free(q);
         }
         return 0;
@@ -362,8 +398,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         KillTimer(hwnd, TIMER_PROGRESS);
         if (progress_hwnd) ShowWindow(progress_hwnd, SW_HIDE);
         if (list_hwnd) {
+            char *q = text_encoded(input_hwnd);
             SetWindowPos(list_hwnd, NULL, 0, S(28), win_w, win_h - S(28), SWP_NOZORDER);
-            refill_list("");
+            if (q) refill_list(q);
+            free(q);
         }
         return 0;
     case WM_TIMER:
@@ -375,7 +413,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_COMMAND:
         if (LOWORD(wp) == ID_LABEL) return 0;
-        if (LOWORD(wp) == ID_EDIT && HIWORD(wp) == EN_CHANGE && has_items && !loading_items) {
+        if (LOWORD(wp) == ID_EDIT && HIWORD(wp) == EN_CHANGE && has_items) {
             char *q = text_encoded(input_hwnd);
             refill_list(q);
             free(q);

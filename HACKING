@@ -77,7 +77,7 @@ Use -default-controls for normal Windows edit behavior.
 
 Release checklist
 -----------------
-1. Run make.
+1. Run make and make test (native ListBox append/selection regression).
 2. Check:
        .\\wmenu.exe -help
        .\\wmenu.exe -version
@@ -97,9 +97,10 @@ Known simplifications
 ---------------------
 - Default input/output encoding is UTF-8. Use `-enc ansi` or `-enc oem` for
   legacy Windows pipes such as classic `cmd.exe` output.
-- The ListBox displays at most LIST_LIMIT rows. This keeps huge streams (for
-  example 100MB+ logs) responsive instead of trying to shove every line into a
-  Win32 list control.
+- The ListBox displays at most LIST_LIMIT rows. Stream updates append new
+  unfiltered rows rather than resetting the control; filtered results rebuild
+  only if the displayed matches change. The native ListBox owns scrolling.
+  This keeps huge streams (for example 100MB+ logs) responsive.
 - Filtering scans at most SCAN_LIMIT rows and stops after LIST_LIMIT matches.
   This intentionally favors staying interactive over exhaustive ranking on
   massive inputs.

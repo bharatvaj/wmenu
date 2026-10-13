@@ -9,6 +9,10 @@ CFLAGS = $(DEBUG)
 wmenu.exe: wmenu.c arg.h deps/fzy/src/match.c deps/fzy/config.h deps/fzy/src/strings.h
 	cl wmenu.c deps/fzy/src/match.c /I deps/fzy/src $(CFLAGS) user32.lib comctl32.lib gdi32.lib
 
+test: test_stream.c wmenu.c arg.h deps/fzy/src/match.c deps/fzy/config.h deps/fzy/src/strings.h
+	cl test_stream.c deps/fzy/src/match.c /I deps/fzy/src $(CFLAGS) user32.lib comctl32.lib gdi32.lib /Fe:test_stream.exe
+	./test_stream.exe
+
 deps/fzy/config.h: deps/fzy/src/config.def.h
 	printf '#include "src/config.def.h"\n' > deps/fzy/config.h
 
