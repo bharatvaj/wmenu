@@ -10,6 +10,17 @@ Build
 -----
     make
 
+Style
+-----
+Follow https://suckless.org/coding_style/ where practical for Win32 C.
+Format the tracked C sources with:
+
+    astyle --options=none --project=.astylerc wmenu.c test_stream.c arg.h
+
+AStyle covers indentation, braces, function layout, and most line breaks;
+review comments and long Win32 directives manually. Keep the existing C99
+bool usage rather than changing program logic just to satisfy a style rule.
+
 Dependencies
 ------------
 No external source dependencies. The byte-safe subsequence matcher lives in

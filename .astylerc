@@ -1,0 +1,13 @@
+# Closest AStyle approximation of https://suckless.org/coding_style/.
+# Manual conventions (declarations at block start, 79 columns, comments)
+# are not reliably enforceable by AStyle.
+style=kr
+indent=tab=8
+pad-oper
+pad-header
+pad-comma
+align-pointer=name
+break-return-type
+max-code-length=79
+max-code-length-mode=code
+suffix=none
