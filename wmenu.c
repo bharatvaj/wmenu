@@ -21,10 +21,11 @@
 #define ID_LABEL 103
 #define ID_PROGRESS 104
 #define TIMER_PROGRESS 201
+#define TIMER_SEARCH 202
 #define WM_STDIN_CHUNK (WM_APP + 1)
 #define WM_STDIN_DONE (WM_APP + 2)
 #define WM_SEARCH_STEP (WM_APP + 3)
-#define SEARCH_BATCH 1024
+#define SEARCH_BATCH 64
 #define CHUNK_LINES 2048
 #define LOCATION_LIMIT 128
 
@@ -35,7 +36,10 @@ static char **items, **selected;
 static int item_count, item_capacity, selected_count;
 static int *matches, match_count, match_capacity, search_pos;
 static char *search_query;
-static int locations[LOCATION_LIMIT], location_count, location_cursor, last_row = -1;
+struct location { char *query; int item; }; /* Source item IDs survive filtering. */
+static struct location locations[LOCATION_LIMIT];
+static int location_count, location_cursor, last_row = -1, pending_item = -1;
+static bool restoring_location, search_posted;
 static volatile LONG refresh_pending;
 static bool has_items, has_prompt, multi_select, vi_mode, normal_mode, default_controls;
 static wchar_t prompt[300];
@@ -50,7 +54,6 @@ static wchar_t font_name[LF_FACESIZE];
 static HFONT ui_font;
 static bool custom_font;
 static bool center_window, close_on_blur, stdin_pipe, loading_items, input_done, progress_visible;
-static volatile LONG search_pending;
 static int progress_pos, progress_dir = 5;
 char *argv0;
 
@@ -135,40 +138,95 @@ static int row_item(int row)
     return row < item_count ? row : -1;
 }
 
-static void record_location(int from, int to)
+static void truncate_locations(void)
 {
-    if (from < 0 || to < 0 || from == to) return;
-    if (!location_count) {
-        locations[0] = from;
-        location_count = 1;
-        location_cursor = 0;
-    }
-    location_count = location_cursor + 1; /* A new move discards forward history. */
+    for (int i = location_cursor + 1; i < location_count; ++i) free(locations[i].query);
+    if (location_count) location_count = location_cursor + 1;
+}
+
+static void push_location(const char *query, int item)
+{
+    char *copy = _strdup(query ? query : "");
+    if (!copy) return;
+    truncate_locations();
     if (location_count == LOCATION_LIMIT) {
+        free(locations[0].query);
         memmove(locations, locations + 1, (LOCATION_LIMIT - 1) * sizeof(*locations));
         --location_count;
-        --location_cursor;
     }
-    locations[location_count++] = to;
+    locations[location_count++] = (struct location){ copy, item };
     location_cursor = location_count - 1;
+}
+
+static void record_location(int from, int to)
+{
+    if (to < 0 || from == to) return;
+    int new_item = row_item(to);
+    if (from < 0) {
+        if (!location_count || pending_item >= 0 ||
+            strcmp(locations[location_cursor].query, search_query ? search_query : ""))
+            push_location(search_query, new_item);
+        else locations[location_cursor].item = new_item;
+        return;
+    }
+    int old_item = row_item(from);
+    if (!location_count) push_location(search_query, old_item);
+    else if (!strcmp(locations[location_cursor].query, search_query ? search_query : "") &&
+             locations[location_cursor].item < 0)
+        locations[location_cursor].item = old_item;
+    else if (strcmp(locations[location_cursor].query, search_query ? search_query : "") ||
+             locations[location_cursor].item != old_item)
+        push_location(search_query, old_item);
+    push_location(search_query, new_item);
+}
+
+static void restore_location(void)
+{
+    if (pending_item < 0) return;
+    int row = pending_item;
+    if (search_query && *search_query) {
+        if (search_pos <= pending_item) return; /* Search has not reached this item. */
+        int lo = 0, hi = match_count;
+        while (lo < hi) {
+            int mid = lo + (hi - lo) / 2;
+            if (matches[mid] < pending_item) lo = mid + 1;
+            else hi = mid;
+        }
+        row = lo < match_count && matches[lo] == pending_item ? lo : -1;
+    }
+    pending_item = -1;
+    if (row >= 0 && row < SendMessageW(list_hwnd, LB_GETCOUNT, 0, 0)) {
+        int previous = (int)SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0);
+        SendMessageW(list_hwnd, LB_SETCURSEL, row, 0);
+        last_row = row;
+        RECT rect;
+        if (previous >= 0 && SendMessageW(list_hwnd, LB_GETITEMRECT, previous, (LPARAM)&rect) != LB_ERR)
+            InvalidateRect(list_hwnd, &rect, FALSE);
+        if (SendMessageW(list_hwnd, LB_GETITEMRECT, row, (LPARAM)&rect) != LB_ERR)
+            InvalidateRect(list_hwnd, &rect, FALSE);
+        UpdateWindow(list_hwnd);
+    }
 }
 
 static void visit_location(int delta)
 {
-    if (!list_hwnd || !location_count) return;
     int next = location_cursor + delta;
-    int count = (int)SendMessageW(list_hwnd, LB_GETCOUNT, 0, 0);
-    if (next < 0 || next >= location_count || locations[next] < 0 || locations[next] >= count) return;
-    int previous = (int)SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0);
+    if (!list_hwnd || !location_count || next < 0 || next >= location_count) return;
+    wchar_t *query = widen(locations[next].query);
+    if (!query) return;
     location_cursor = next;
-    SendMessageW(list_hwnd, LB_SETCURSEL, locations[next], 0);
-    last_row = locations[next];
-    RECT rect;
-    if (previous >= 0 && SendMessageW(list_hwnd, LB_GETITEMRECT, previous, (LPARAM)&rect) != LB_ERR)
-        InvalidateRect(list_hwnd, &rect, FALSE);
-    if (SendMessageW(list_hwnd, LB_GETITEMRECT, locations[next], (LPARAM)&rect) != LB_ERR)
-        InvalidateRect(list_hwnd, &rect, FALSE);
-    UpdateWindow(list_hwnd);
+    pending_item = locations[next].item;
+    restoring_location = true;
+    SetWindowTextW(input_hwnd, query); /* EN_CHANGE starts the saved search. */
+    restoring_location = false;
+    free(query);
+    if (pending_item >= 0 && search_query && *search_query && search_pos <= pending_item) {
+        SendMessageW(list_hwnd, LB_SETCURSEL, -1, 0);
+        last_row = -1;
+        InvalidateRect(list_hwnd, NULL, FALSE);
+        UpdateWindow(list_hwnd);
+    }
+    restore_location();
 }
 
 static void update_count(void)
@@ -185,8 +243,9 @@ static void update_count(void)
     SendMessageW(list_hwnd, WM_SETREDRAW, FALSE, 0);
     SendMessageW(list_hwnd, LB_SETCOUNT, count, 0);
     if (count) {
-        SendMessageW(list_hwnd, LB_SETCURSEL, selected >= 0 && selected < count ? selected : 0, 0);
-        last_row = selected >= 0 && selected < count ? selected : 0;
+        int wanted = pending_item >= 0 ? -1 : selected >= 0 && selected < count ? selected : 0;
+        SendMessageW(list_hwnd, LB_SETCURSEL, wanted, 0);
+        last_row = wanted;
         if (top > 0 || SendMessageW(list_hwnd, LB_GETTOPINDEX, 0, 0) != 0)
             SendMessageW(list_hwnd, LB_SETTOPINDEX, top < count ? top : count - 1, 0);
     }
@@ -222,8 +281,7 @@ static void update_progress(void)
 
 static void queue_search(void)
 {
-    if (!InterlockedExchange(&search_pending, 1))
-        PostMessageW(main_hwnd, WM_SEARCH_STEP, 0, 0);
+    if (!search_posted) search_posted = PostMessageW(main_hwnd, WM_SEARCH_STEP, 0, 0) != 0;
 }
 
 static VOID WINAPI search_fiber_run(void *unused)
@@ -250,11 +308,18 @@ static VOID WINAPI search_fiber_run(void *unused)
 
 static void search_step(void)
 {
-    if (!search_query || !*search_query || search_pos >= item_count) return;
+    if (!search_query || !*search_query || search_pos >= item_count) {
+        KillTimer(main_hwnd, TIMER_SEARCH);
+        return;
+    }
     SwitchToFiber(search_fiber);
     update_count();
+    restore_location();
     update_progress();
-    if (search_pos < item_count) queue_search();
+    if (search_pos >= item_count) KillTimer(main_hwnd, TIMER_SEARCH);
+    else if (HIWORD(GetQueueStatus(QS_INPUT)))
+        SetTimer(main_hwnd, TIMER_SEARCH, 15, NULL); /* Let keyboard/mouse go first. */
+    else queue_search();
 }
 
 static void refill_list(const char *query)
@@ -263,11 +328,32 @@ static void refill_list(const char *query)
     if (!search_query || strcmp(query, search_query)) {
         char *copy = _strdup(query);
         if (!copy) return;
+        if (!restoring_location) {
+            pending_item = -1;
+            if (search_query) {
+                int item = row_item((int)SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0));
+                if (!location_count) push_location(search_query, item);
+                else if (!strcmp(locations[location_cursor].query, search_query) && item >= 0)
+                    locations[location_cursor].item = item;
+                bool related = *query && *search_query && last_row <= 0 &&
+                    (!strncmp(query, search_query, strlen(query)) ||
+                     !strncmp(query, search_query, strlen(search_query)));
+                bool intermediate_empty = !*search_query && *query && last_row <= 0 &&
+                    location_count > 1 && !*locations[location_cursor].query;
+                if (related || intermediate_empty) {
+                    char *history_copy = _strdup(query);
+                    if (!history_copy) { free(copy); return; }
+                    truncate_locations();
+                    free(locations[location_cursor].query);
+                    locations[location_cursor] = (struct location){ history_copy, -1 };
+                } else push_location(query, -1);
+            }
+        }
         free(search_query);
         search_query = copy;
         match_count = 0;
         search_pos = 0;
-        location_count = location_cursor = 0;
+        KillTimer(main_hwnd, TIMER_SEARCH);
         last_row = -1;
         if (*search_query) SendMessageW(list_hwnd, LB_SETCOUNT, 0, 0);
         else update_count();
@@ -277,6 +363,7 @@ static void refill_list(const char *query)
             last_row = 0;
         }
         UpdateWindow(list_hwnd);
+        restore_location();
     }
     if (*search_query && search_pos < item_count) queue_search();
     else if (!*search_query) update_count();
@@ -286,10 +373,10 @@ static void refill_list(const char *query)
 static char *current_text(void)
 {
     int sel = list_hwnd ? (int)SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0) : -1;
-    if (has_items && sel >= 0) {
+    if (has_items && (sel >= 0 || pending_item >= 0)) {
         char *s = NULL;
         EnterCriticalSection(&items_lock);
-        int index = row_item(sel);
+        int index = pending_item >= 0 ? pending_item : row_item(sel);
         if (index >= 0 && index < item_count) s = _strdup(items[index]);
         LeaveCriticalSection(&items_lock);
         return s;
@@ -332,6 +419,7 @@ static void list_move(int delta)
     if (cur == previous) return;
     SendMessageW(list_hwnd, LB_SETCURSEL, cur, 0);
     record_location((int)previous, (int)cur);
+    pending_item = -1;
     last_row = (int)cur;
     RECT rect;
     if (previous >= 0 && SendMessageW(list_hwnd, LB_GETITEMRECT, previous, (LPARAM)&rect) != LB_ERR)
@@ -445,6 +533,7 @@ static bool handle_vi_keys(WORD key, struct key_state k)
         if (target >= 0 && target < SendMessageW(list_hwnd, LB_GETCOUNT, 0, 0)) {
             SendMessageW(list_hwnd, LB_SETCURSEL, target, 0);
             record_location(last_row, target);
+            pending_item = -1;
             last_row = target;
             UpdateWindow(list_hwnd);
         }
@@ -504,10 +593,15 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         }
         return 0;
     case WM_SEARCH_STEP:
-        InterlockedExchange(&search_pending, 0);
+        search_posted = false;
         search_step();
         return 0;
     case WM_TIMER:
+        if (wp == TIMER_SEARCH) {
+            KillTimer(hwnd, TIMER_SEARCH);
+            if (!search_posted) search_step();
+            return 0;
+        }
         if (wp == TIMER_PROGRESS && progress_hwnd && !input_done) {
             if (list_hwnd) refill_list(search_query ? search_query : "");
             progress_pos += progress_dir;
@@ -560,6 +654,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         if (LOWORD(wp) == ID_COMBO && HIWORD(wp) == LBN_SELCHANGE) {
             int row = (int)SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0);
             record_location(last_row, row);
+            pending_item = -1;
             last_row = row;
         }
         if (LOWORD(wp) == ID_COMBO && HIWORD(wp) == LBN_DBLCLK) {

@@ -88,7 +88,8 @@ int main(int argc, char **argv)
     location_count = location_cursor = 0;
     for (int i = 0; i < LOCATION_LIMIT + 2; ++i) record_location(i, i + 1);
     assert(location_count == LOCATION_LIMIT && location_cursor == LOCATION_LIMIT - 1);
-    assert(locations[0] == 3); /* Oldest positions drop off at the limit. */
+    assert(locations[0].item == 3); /* Oldest positions drop off at the limit. */
+    for (int i = 0; i < location_count; ++i) free(locations[i].query);
     location_count = location_cursor = 0;
     list_move(-2);
     list_move(5);
@@ -116,13 +117,39 @@ int main(int argc, char **argv)
     refill_list("item-1");
     search_step();
     assert(search_pos == SEARCH_BATCH);
-    assert(location_count == 0); /* A new query starts a new history. */
+    assert(location_count > 0); /* Previous search is retained. */
+    int searches = location_count;
+    refill_list("item-12");
+    refill_list("item-123");
+    refill_list("item-1");
+    assert(location_count == searches); /* Editing one query is not four jumps. */
+    while (search_pos < 1024) search_step();
+    int old_item = matches[match_count - 1];
     SendMessageW(list_hwnd, LB_SETCURSEL, match_count - 1, 0);
     assert(SendMessageW(list_hwnd, LB_GETTOPINDEX, 0, 0) > 0);
     SetWindowTextW(input_hwnd, L"item-1");
     SetWindowTextW(input_hwnd, L""); /* EN_CHANGE: clearing returns to the top. */
     assert(SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0) == 0);
     assert(SendMessageW(list_hwnd, LB_GETTOPINDEX, 0, 0) == 0);
+    visit_location(-1);
+    assert(!strcmp(search_query, "item-1"));
+    search_step();
+    assert(SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0) == LB_ERR);
+    char *pending_text = current_text(); /* Enter must use the saved line, not row zero. */
+    assert(pending_text && !strcmp(pending_text, items[old_item]));
+    free(pending_text);
+    while (search_pos <= old_item) search_step();
+    assert(row_item((int)SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0)) == old_item);
+    visit_location(1);
+    assert(!strcmp(search_query, ""));
+    assert(SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0) == 0);
+    visit_location(-1);
+    search_step();
+    list_move(1); /* Manual navigation cancels a pending history restore. */
+    assert(pending_item == -1 && SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0) == 0);
+    visit_location(-1);
+    assert(pending_item == old_item && SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0) == LB_ERR);
+    refill_list("");
     refill_list("item-1");
     search_step();
     refill_list("item-59999"); /* Cancel the previous search and start over. */
