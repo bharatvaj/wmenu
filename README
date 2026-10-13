@@ -13,6 +13,10 @@ Build
 -----
 Use a Visual Studio Developer Command Prompt and run make.
 
+Credits
+-------
+Original wmenu by LinArcX; thanks for the inspiration.
+
 How it works
 ------------
 wmenu is a GUI filter: newline-separated stdin goes in, the selected line is printed to stdout.
