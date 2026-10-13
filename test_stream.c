@@ -78,12 +78,22 @@ int main(int argc, char **argv)
     ReleaseDC(NULL, screen);
     refill_list("");
     assert(SendMessageW(list_hwnd, LB_GETCOUNT, 0, 0) == 60000);
+    ShowWindow(main_hwnd, SW_SHOWNOACTIVATE);
+    ShowWindow(list_hwnd, SW_SHOWNOACTIVATE);
+    UpdateWindow(list_hwnd);
+    assert(!GetUpdateRect(list_hwnd, NULL, FALSE));
+    add_item("item-60000");
+    refill_list("");
+    assert(SendMessageW(list_hwnd, LB_GETCOUNT, 0, 0) == 60001);
+    RECT dirty;
+    assert(!GetUpdateRect(list_hwnd, &dirty, FALSE) || IsRectEmpty(&dirty));
+    /* Count/scrollbar may update, but the existing client rows stay untouched. */
     refill_list("tail-special");
     search_step();
     input_done = false;
     add_item("tail-special");
     while (search_pos < item_count) search_step();
-    assert(match_count == 1 && matches[0] == 60000);
+    assert(match_count == 1 && matches[0] == 60001);
     input_done = true;
     update_progress();
     assert(SendMessageW(list_hwnd, LB_GETCOUNT, 0, 0) == 1);

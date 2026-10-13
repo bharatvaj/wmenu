@@ -107,7 +107,9 @@ Known simplifications
   thread, yields after each SEARCH_BATCH, and resumes through WM_SEARCH_STEP.
   It never yields while holding items_lock. The reader remains a separate
   thread. Matching rows are indexed in source order (fzy subsequence matching,
-  not score-ranked). No silent row cap. The bottom bar shows search progress
+  not score-ranked). No silent row cap. LB_SETCOUNT is wrapped with redraw
+  suppression: unchanged visible rows are not invalidated as the row count
+  grows; only newly visible rows are. The bottom bar shows search progress
   after stdin completes.
 - lnav inspiration: its logfile index tracks lines separately from the view
   (https://github.com/tstack/lnav/blob/master/src/logfile.hh, lf_index and

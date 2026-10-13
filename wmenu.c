@@ -136,10 +136,27 @@ static int row_item(int row)
 static void update_count(void)
 {
     int count = search_query && *search_query ? match_count : item_count;
-    if (SendMessageW(list_hwnd, LB_GETCOUNT, 0, 0) == count) return;
+    int old_count = (int)SendMessageW(list_hwnd, LB_GETCOUNT, 0, 0);
+    if (old_count == count) return;
     int selected = (int)SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0);
+    int top = (int)SendMessageW(list_hwnd, LB_GETTOPINDEX, 0, 0);
+    int height = (int)SendMessageW(list_hwnd, LB_GETITEMHEIGHT, 0, 0);
+    RECT client;
+    GetClientRect(list_hwnd, &client);
+    SendMessageW(list_hwnd, WM_SETREDRAW, FALSE, 0);
     SendMessageW(list_hwnd, LB_SETCOUNT, count, 0);
     if (count && selected < 0) SendMessageW(list_hwnd, LB_SETCURSEL, 0, 0);
+    SendMessageW(list_hwnd, WM_SETREDRAW, TRUE, 0);
+    /* LB_SETCOUNT may invalidate everything. Only newly visible rows need paint. */
+    RedrawWindow(list_hwnd, NULL, NULL, RDW_VALIDATE | RDW_NOCHILDREN);
+    int new_top = (int)SendMessageW(list_hwnd, LB_GETTOPINDEX, 0, 0);
+    if (top != new_top || count < old_count || height <= 0) {
+        InvalidateRect(list_hwnd, NULL, FALSE);
+    } else if (old_count < new_top + (client.bottom - client.top + height - 1) / height) {
+        client.top += (old_count - new_top) * height;
+        if (client.top < 0) client.top = 0;
+        InvalidateRect(list_hwnd, &client, FALSE);
+    }
 }
 
 static void update_progress(void)
