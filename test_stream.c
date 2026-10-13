@@ -3,6 +3,13 @@
 #undef main
 #include <assert.h>
 
+static int draw_calls;
+static LRESULT CALLBACK TestWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+    if (msg == WM_DRAWITEM) ++draw_calls;
+    return WndProc(hwnd, msg, wp, lp);
+}
+
 int main(int argc, char **argv)
 {
     InitializeCriticalSection(&items_lock);
@@ -14,7 +21,7 @@ int main(int argc, char **argv)
     input_done = true;
     has_items = true;
     WNDCLASSW wc = {0};
-    wc.lpfnWndProc = WndProc;
+    wc.lpfnWndProc = TestWndProc;
     wc.hInstance = GetModuleHandleW(NULL);
     wc.lpszClassName = L"wmenu-test";
     assert(RegisterClassW(&wc));
@@ -22,13 +29,21 @@ int main(int argc, char **argv)
     list_hwnd = CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VSCROLL | LBS_NODATA | LBS_OWNERDRAWFIXED,
                               0, 0, 400, 300, main_hwnd, (HMENU)ID_COMBO, wc.hInstance, NULL);
     progress_hwnd = CreateWindowW(PROGRESS_CLASSW, L"", WS_CHILD, 0, 290, 400, 10, main_hwnd, NULL, NULL, NULL);
-    assert(list_hwnd && progress_hwnd);
+    input_hwnd = CreateWindowW(L"EDIT", L"", WS_CHILD, 0, 0, 400, 28, main_hwnd, NULL, NULL, NULL);
+    assert(list_hwnd && progress_hwnd && input_hwnd);
     ui_fiber = ConvertThreadToFiber(NULL);
     assert(ui_fiber);
     search_fiber = CreateFiber(0, search_fiber_run, NULL);
     assert(search_fiber);
     bool stress = argc > 1 && !strcmp(argv[1], "stress");
-    for (int i = 0; i < 60000; ++i) {
+    ShowWindow(main_hwnd, SW_SHOWNOACTIVATE);
+    ShowWindow(list_hwnd, SW_SHOWNOACTIVATE);
+    add_item("item-0");
+    WndProc(main_hwnd, WM_STDIN_CHUNK, 0, 0);
+    UpdateWindow(list_hwnd);
+    assert(SendMessageW(list_hwnd, LB_GETCOUNT, 0, 0) == 1);
+    assert(draw_calls > 0); /* First streamed row must actually paint. */
+    for (int i = 1; i < 60000; ++i) {
         char buf[2700];
         sprintf(buf, "item-%d", i);
         if (stress) {

@@ -152,10 +152,12 @@ static void update_count(void)
     int new_top = (int)SendMessageW(list_hwnd, LB_GETTOPINDEX, 0, 0);
     if (top != new_top || count < old_count || height <= 0) {
         InvalidateRect(list_hwnd, NULL, FALSE);
+        UpdateWindow(list_hwnd);
     } else if (old_count < new_top + (client.bottom - client.top + height - 1) / height) {
         client.top += (old_count - new_top) * height;
         if (client.top < 0) client.top = 0;
         InvalidateRect(list_hwnd, &client, FALSE);
+        UpdateWindow(list_hwnd); /* Posted stream messages must not starve WM_PAINT. */
     }
 }
 

@@ -79,7 +79,8 @@ Release checklist
 -----------------
 1. Run make, make test, and optionally make stress (about 155 MiB of synthetic
    rows; validates no-data ListBox navigation, full-file fiber search, and
-   progress state).
+   progress state). Run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+   test_pipe.ps1` to verify rows appear before pipe EOF.
 2. Check:
        .\\wmenu.exe -help
        .\\wmenu.exe -version
@@ -109,8 +110,9 @@ Known simplifications
   thread. Matching rows are indexed in source order (fzy subsequence matching,
   not score-ranked). No silent row cap. LB_SETCOUNT is wrapped with redraw
   suppression: unchanged visible rows are not invalidated as the row count
-  grows; only newly visible rows are. The bottom bar shows search progress
-  after stdin completes.
+  grows; only newly visible rows are, and those are painted immediately so
+  queued stream messages cannot starve WM_PAINT. The bottom bar shows search
+  progress after stdin completes.
 - lnav inspiration: its logfile index tracks lines separately from the view
   (https://github.com/tstack/lnav/blob/master/src/logfile.hh, lf_index and
   read_line); its text view requests counts and rows from a text sub-source
