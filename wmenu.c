@@ -12,8 +12,6 @@
 #include <wctype.h>
 
 #include "arg.h"
-#include "deps/fzy/src/match.h"
-
 #ifdef _MSC_VER
 #pragma comment(linker,"/manifestdependency:\"type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 #endif
@@ -183,6 +181,19 @@ static DWORD WINAPI read_stdin_thread(void *unused)
     free(line);
     PostMessageW(main_hwnd, WM_STDIN_DONE, status < 0, 0);
     return 0;
+}
+
+/* fzy-style subsequence matching, with non-ASCII UTF-8 bytes compared literally. */
+static bool has_match(const char *query, const char *line)
+{
+    while (*query) {
+        unsigned char ch = (unsigned char)*query++;
+        unsigned char upper = ch >= 'a' && ch <= 'z' ? ch - 'a' + 'A' : ch;
+        while (*line && (unsigned char)*line != ch && (unsigned char)*line != upper) ++line;
+        if (!*line) return false;
+        ++line;
+    }
+    return true;
 }
 
 /* The ListBox stores only a count. Its row IDs map into items or matches. */

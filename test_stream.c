@@ -17,6 +17,10 @@ static LRESULT CALLBACK TestWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
 int main(int argc, char **argv)
 {
+    assert(has_match("aC", "ABC"));
+    assert(!has_match("Ab", "abc")); /* Preserve fzy's ASCII query casing. */
+    assert(has_match("\xc3\xa9", "caf\xc3\xa9"));
+    assert(!has_match("\xc3\xa9", "caf\xc3\x89"));
     FILE *input = tmpfile();
     assert(input);
     char long_row[8193];
@@ -229,6 +233,10 @@ int main(int argc, char **argv)
     input_done = true;
     update_progress();
     assert(SendMessageW(list_hwnd, LB_GETCOUNT, 0, 0) == 1);
+    assert(add_item("caf\xc3\xa9"));
+    SetWindowTextW(input_hwnd, L"\x00e9"); /* UTF-8 edit text goes through the search path. */
+    while (search_pos < loaded_count()) search_step();
+    assert(match_count == 1 && matches[0] == 60003);
     DeleteFiber(search_fiber);
     ConvertFiberToThread();
     DestroyWindow(main_hwnd);

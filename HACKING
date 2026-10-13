@@ -12,21 +12,9 @@ Build
 
 Dependencies
 ------------
-External source is pulled with mor from requirements.ini:
-
-    bash /path/to/mor.sh .
-
-This fetches fzy v1.1 into deps/fzy (requirements.ini pins the tag).
-For an existing checkout, remove deps/fzy before rerunning mor: mor does not
-update directories already present. The build uses only fzy's matcher:
-
-    deps/fzy/src/match.c
-    deps/fzy/src/match.h
-
-Makefile generates two tiny compatibility files inside deps/ when needed:
-
-    deps/fzy/config.h
-    deps/fzy/src/strings.h
+No external source dependencies. The byte-safe subsequence matcher lives in
+wmenu.c; ASCII matching retains fzy's old behavior, while non-ASCII UTF-8
+bytes are compared literally.
 
 Program shape
 -------------
@@ -113,7 +101,7 @@ Known simplifications
   It never yields while holding items_lock. The reader remains a separate
   thread. It publishes item_count with InterlockedIncrement after inserting a
   row; UI count reads use loaded_count(), and item pointers are read under
-  items_lock. Matching rows are indexed in source order (fzy subsequence matching,
+  items_lock. Matching rows are indexed in source order (subsequence matching,
   not score-ranked). No silent row cap. LB_SETCOUNT is wrapped with redraw
   suppression: unchanged visible rows are not invalidated as the row count
   grows; only newly visible rows are, and those are painted immediately so
