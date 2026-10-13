@@ -114,7 +114,10 @@ Known simplifications
   queued stream messages cannot starve WM_PAINT. Restore the selection and
   top row after LB_SETCOUNT (Windows can otherwise jump to the end), and
   preserve pending selection paints when validating the viewport. The bottom
-  bar shows search progress after stdin completes.
+  bar shows search progress after stdin completes. A changed query resets the
+  viewport to row zero and clears the bounded Ctrl+O/I row history; growing
+  the current result set does neither. The existing loading timer also picks
+  up partial stdin batches when the pipe stays open.
 - lnav inspiration: its logfile index tracks lines separately from the view
   (https://github.com/tstack/lnav/blob/master/src/logfile.hh, lf_index and
   read_line); its text view requests counts and rows from a text sub-source

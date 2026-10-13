@@ -34,7 +34,7 @@ int main(int argc, char **argv)
     list_hwnd = CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VSCROLL | LBS_NODATA | LBS_OWNERDRAWFIXED,
                               0, 0, 400, 300, main_hwnd, (HMENU)ID_COMBO, wc.hInstance, NULL);
     progress_hwnd = CreateWindowW(PROGRESS_CLASSW, L"", WS_CHILD, 0, 290, 400, 10, main_hwnd, NULL, NULL, NULL);
-    input_hwnd = CreateWindowW(L"EDIT", L"", WS_CHILD, 0, 0, 400, 28, main_hwnd, NULL, NULL, NULL);
+    input_hwnd = CreateWindowW(L"EDIT", L"", WS_CHILD, 0, 0, 400, 28, main_hwnd, (HMENU)ID_EDIT, wc.hInstance, NULL);
     assert(list_hwnd && progress_hwnd && input_hwnd);
     ui_fiber = ConvertThreadToFiber(NULL);
     assert(ui_fiber);
@@ -62,13 +62,48 @@ int main(int argc, char **argv)
     assert(SendMessageW(list_hwnd, LB_GETCOUNT, 0, 0) == 60000);
     SendMessageW(list_hwnd, LB_SETCURSEL, 0, 0);
     UpdateWindow(list_hwnd);
+    visit_location(-1); /* Empty history and both ends are no-ops. */
+    visit_location(1);
+    assert(SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0) == 0);
+    list_move(5);
+    list_move(5);
+    struct key_state ctrl = { true, false, false };
+    assert(handle_global_keys('O', ctrl));
+    assert(SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0) == 5);
+    visit_location(-1);
+    visit_location(-1);
+    assert(SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0) == 0);
+    assert(handle_global_keys('I', ctrl));
+    visit_location(1);
+    visit_location(1);
+    assert(SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0) == 10);
+    visit_location(-1);
+    list_move(2);
+    visit_location(1); /* A new move discards the old forward branch. */
+    assert(SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0) == 7);
+    SendMessageW(list_hwnd, LB_SETCURSEL, 9, 0);
+    WndProc(main_hwnd, WM_COMMAND, MAKEWPARAM(ID_COMBO, LBN_SELCHANGE), (LPARAM)list_hwnd);
+    visit_location(-1);
+    assert(SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0) == 7);
+    location_count = location_cursor = 0;
+    for (int i = 0; i < LOCATION_LIMIT + 2; ++i) record_location(i, i + 1);
+    assert(location_count == LOCATION_LIMIT && location_cursor == LOCATION_LIMIT - 1);
+    assert(locations[0] == 3); /* Oldest positions drop off at the limit. */
+    location_count = location_cursor = 0;
+    list_move(-2);
     list_move(5);
     add_item("extra-row");
-    refill_list(""); /* Count update before the selection's WM_PAINT. */
+    input_done = false;
+    WndProc(main_hwnd, WM_TIMER, TIMER_PROGRESS, 0); /* Partial batch before EOF. */
+    input_done = true;
+    update_progress();
     UpdateWindow(list_hwnd);
-    assert(SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0) == 5);
+    assert(SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0) == 10);
     assert(SendMessageW(list_hwnd, LB_GETTOPINDEX, 0, 0) == 0);
-    assert(!painted_selected[0] && painted_selected[5]);
+    assert(!painted_selected[5] && painted_selected[10]);
+    list_move(-5);
+    assert(SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0) == 5);
+    assert(painted_selected[5] && !painted_selected[10]);
     list_move(-5);
     assert(SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0) == 0);
     assert(painted_selected[0] && !painted_selected[5]);
@@ -81,6 +116,15 @@ int main(int argc, char **argv)
     refill_list("item-1");
     search_step();
     assert(search_pos == SEARCH_BATCH);
+    assert(location_count == 0); /* A new query starts a new history. */
+    SendMessageW(list_hwnd, LB_SETCURSEL, match_count - 1, 0);
+    assert(SendMessageW(list_hwnd, LB_GETTOPINDEX, 0, 0) > 0);
+    SetWindowTextW(input_hwnd, L"item-1");
+    SetWindowTextW(input_hwnd, L""); /* EN_CHANGE: clearing returns to the top. */
+    assert(SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0) == 0);
+    assert(SendMessageW(list_hwnd, LB_GETTOPINDEX, 0, 0) == 0);
+    refill_list("item-1");
+    search_step();
     refill_list("item-59999"); /* Cancel the previous search and start over. */
     assert(progress_visible);
     while (search_pos < item_count) search_step();

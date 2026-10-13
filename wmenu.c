@@ -26,6 +26,7 @@
 #define WM_SEARCH_STEP (WM_APP + 3)
 #define SEARCH_BATCH 1024
 #define CHUNK_LINES 2048
+#define LOCATION_LIMIT 128
 
 static int dpi = 96;
 #define S(px) MulDiv((px), dpi, 96)
@@ -34,6 +35,7 @@ static char **items, **selected;
 static int item_count, item_capacity, selected_count;
 static int *matches, match_count, match_capacity, search_pos;
 static char *search_query;
+static int locations[LOCATION_LIMIT], location_count, location_cursor, last_row = -1;
 static volatile LONG refresh_pending;
 static bool has_items, has_prompt, multi_select, vi_mode, normal_mode, default_controls;
 static wchar_t prompt[300];
@@ -133,6 +135,42 @@ static int row_item(int row)
     return row < item_count ? row : -1;
 }
 
+static void record_location(int from, int to)
+{
+    if (from < 0 || to < 0 || from == to) return;
+    if (!location_count) {
+        locations[0] = from;
+        location_count = 1;
+        location_cursor = 0;
+    }
+    location_count = location_cursor + 1; /* A new move discards forward history. */
+    if (location_count == LOCATION_LIMIT) {
+        memmove(locations, locations + 1, (LOCATION_LIMIT - 1) * sizeof(*locations));
+        --location_count;
+        --location_cursor;
+    }
+    locations[location_count++] = to;
+    location_cursor = location_count - 1;
+}
+
+static void visit_location(int delta)
+{
+    if (!list_hwnd || !location_count) return;
+    int next = location_cursor + delta;
+    int count = (int)SendMessageW(list_hwnd, LB_GETCOUNT, 0, 0);
+    if (next < 0 || next >= location_count || locations[next] < 0 || locations[next] >= count) return;
+    int previous = (int)SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0);
+    location_cursor = next;
+    SendMessageW(list_hwnd, LB_SETCURSEL, locations[next], 0);
+    last_row = locations[next];
+    RECT rect;
+    if (previous >= 0 && SendMessageW(list_hwnd, LB_GETITEMRECT, previous, (LPARAM)&rect) != LB_ERR)
+        InvalidateRect(list_hwnd, &rect, FALSE);
+    if (SendMessageW(list_hwnd, LB_GETITEMRECT, locations[next], (LPARAM)&rect) != LB_ERR)
+        InvalidateRect(list_hwnd, &rect, FALSE);
+    UpdateWindow(list_hwnd);
+}
+
 static void update_count(void)
 {
     int count = search_query && *search_query ? match_count : item_count;
@@ -148,6 +186,7 @@ static void update_count(void)
     SendMessageW(list_hwnd, LB_SETCOUNT, count, 0);
     if (count) {
         SendMessageW(list_hwnd, LB_SETCURSEL, selected >= 0 && selected < count ? selected : 0, 0);
+        last_row = selected >= 0 && selected < count ? selected : 0;
         if (top > 0 || SendMessageW(list_hwnd, LB_GETTOPINDEX, 0, 0) != 0)
             SendMessageW(list_hwnd, LB_SETTOPINDEX, top < count ? top : count - 1, 0);
     }
@@ -228,8 +267,16 @@ static void refill_list(const char *query)
         search_query = copy;
         match_count = 0;
         search_pos = 0;
+        location_count = location_cursor = 0;
+        last_row = -1;
         if (*search_query) SendMessageW(list_hwnd, LB_SETCOUNT, 0, 0);
         else update_count();
+        SendMessageW(list_hwnd, LB_SETTOPINDEX, 0, 0);
+        if (SendMessageW(list_hwnd, LB_GETCOUNT, 0, 0) > 0) {
+            SendMessageW(list_hwnd, LB_SETCURSEL, 0, 0);
+            last_row = 0;
+        }
+        UpdateWindow(list_hwnd);
     }
     if (*search_query && search_pos < item_count) queue_search();
     else if (!*search_query) update_count();
@@ -284,6 +331,8 @@ static void list_move(int delta)
     if (cur >= count) cur = count - 1;
     if (cur == previous) return;
     SendMessageW(list_hwnd, LB_SETCURSEL, cur, 0);
+    record_location((int)previous, (int)cur);
+    last_row = (int)cur;
     RECT rect;
     if (previous >= 0 && SendMessageW(list_hwnd, LB_GETITEMRECT, previous, (LPARAM)&rect) != LB_ERR)
         InvalidateRect(list_hwnd, &rect, FALSE);
@@ -349,6 +398,8 @@ static struct key_state key_state(void)
 
 static bool handle_global_keys(WORD key, struct key_state k)
 {
+    if (k.ctrl && key == 'O') { visit_location(-1); return true; }
+    if (k.ctrl && key == 'I') { visit_location(1); return true; }
     if (k.ctrl && key == VK_RETURN && multi_select) { add_selection(); return true; }
     if (key == VK_RETURN) { finish(); return true; }
     if (key == VK_ESCAPE) { PostQuitMessage(0); return true; }
@@ -389,7 +440,16 @@ static bool handle_vi_keys(WORD key, struct key_state k)
     case 'D': if (k.shift) { delete_to_eol(); return true; } break;
     case 'J': list_move(1); return true;
     case 'K': list_move(-1); return true;
-    case 'G': SendMessageW(list_hwnd, LB_SETCURSEL, k.shift ? SendMessageW(list_hwnd, LB_GETCOUNT, 0, 0) - 1 : 0, 0); return true;
+    case 'G': {
+        int target = k.shift ? (int)SendMessageW(list_hwnd, LB_GETCOUNT, 0, 0) - 1 : 0;
+        if (target >= 0 && target < SendMessageW(list_hwnd, LB_GETCOUNT, 0, 0)) {
+            SendMessageW(list_hwnd, LB_SETCURSEL, target, 0);
+            record_location(last_row, target);
+            last_row = target;
+            UpdateWindow(list_hwnd);
+        }
+        return true;
+    }
     case 'W': edit_key(VK_RIGHT); return true;
     case 'B': edit_key(VK_LEFT); return true;
     }
@@ -398,7 +458,8 @@ static bool handle_vi_keys(WORD key, struct key_state k)
 
 static LRESULT CALLBACK InputProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
-    if (msg == WM_CHAR && ((vi_mode && normal_mode) || wp == 0x7f)) return 0;
+    if (msg == WM_CHAR && ((vi_mode && normal_mode) || wp == 0x7f ||
+        ((GetKeyState(VK_CONTROL) & 0x8000) && (wp == 9 || wp == 15)))) return 0;
     if (msg == WM_KEYDOWN) {
         struct key_state k = key_state();
         if (handle_global_keys((WORD)wp, k)) return 0;
@@ -448,6 +509,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_TIMER:
         if (wp == TIMER_PROGRESS && progress_hwnd && !input_done) {
+            if (list_hwnd) refill_list(search_query ? search_query : "");
             progress_pos += progress_dir;
             if (progress_pos >= 100 || progress_pos <= 0) progress_dir = -progress_dir;
             SendMessageW(progress_hwnd, PBM_SETPOS, progress_pos, 0);
@@ -494,6 +556,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             char *q = text_encoded(input_hwnd);
             refill_list(q);
             free(q);
+        }
+        if (LOWORD(wp) == ID_COMBO && HIWORD(wp) == LBN_SELCHANGE) {
+            int row = (int)SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0);
+            record_location(last_row, row);
+            last_row = row;
         }
         if (LOWORD(wp) == ID_COMBO && HIWORD(wp) == LBN_DBLCLK) {
             if (multi_select) add_selection(); else finish();

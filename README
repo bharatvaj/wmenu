@@ -38,6 +38,9 @@ Useful flags:
 -h                  print usage
 ```
 
+Clearing the search returns to the first row. Changing the search resets
+Ctrl+O/I history; history is limited to the latest 128 positions.
+
 Default keys:
 
 ```
@@ -46,6 +49,7 @@ Esc         exit
 Up/Down     move list selection
 Ctrl+N/P    next/previous item
 Ctrl+D/U    page down/up
+Ctrl+O/I    back/forward through visited rows (current search only)
 Ctrl+A      move to start; press again at start to select all
 Ctrl+E      move to end
 Ctrl+K      delete to end
