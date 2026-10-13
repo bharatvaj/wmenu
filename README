@@ -16,6 +16,7 @@ Use a Visual Studio Developer Command Prompt and run make.
 Credits
 -------
 Original wmenu by LinArcX; thanks for the inspiration.
+This is a hard fork with a separate Win32 implementation.
 
 How it works
 ------------
