@@ -28,6 +28,9 @@ Makefile generates two tiny compatibility files inside deps/ when needed:
 
 Program shape
 -------------
+Argument parsing uses the suckless-style macros in arg.h. Keep flags short
+unless a Win32-ish name is already established, like -fn/-fs/-fw for fonts.
+
 Important sections in wmenu.c:
 
 - input/output conversion: widen(), text_encoded(), current_text()

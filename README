@@ -24,18 +24,18 @@ Useful flags:
 
 ```
 -p text             prompt text
--enc utf8|ansi|oem  stdin/stdout/prompt encoding; default utf8
+-e utf8|ansi|oem    stdin/stdout/prompt encoding; default utf8
 -x px -y px -w px   position and width
--c / -center        center window
+-c                  center window
 -l lines            visible list lines
--multi              select multiple entries; Ctrl+Enter adds one
--vi                 enable vi support; Ctrl+Alt+V toggles vi mode
--default-controls   use normal Windows edit shortcuts instead of emacs-ish keys
--close-on-blur      exit when focus leaves the window
+-m                  select multiple entries; Ctrl+Enter adds one
+-V                  enable vi support; Ctrl+Alt+V toggles vi mode
+-d                  use normal Windows edit shortcuts instead of emacs-ish keys
+-b                  exit when focus leaves the window
 -fn name -fs pt -fw weight
                     font face, size, and weight
--version            print version
--help               print usage
+-v                  print version
+-h                  print usage
 ```
 
 Default keys:

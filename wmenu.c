@@ -9,6 +9,7 @@
 #include <io.h>
 #include <wctype.h>
 
+#include "arg.h"
 #include "deps/fzy/src/match.h"
 
 #ifdef _MSC_VER
@@ -45,6 +46,7 @@ static HFONT ui_font;
 static bool custom_font;
 static bool center_window, close_on_blur, stdin_pipe, loading_items;
 static int progress_pos, progress_dir = 5;
+char *argv0;
 
 static wchar_t *widen(const char *s)
 {
@@ -400,7 +402,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
 static void usage(void)
 {
-    puts("usage: wmenu [-p prompt] [-enc utf8|ansi|oem] [-fn name] [-fs pt] [-fw weight] [-x px] [-y px] [-w px] [-c] [-l lines] [-multi] [-vi] [-default-controls] [-close-on-blur] < items");
+    puts("usage: wmenu [-chimbdVv] [-e utf8|ansi|oem] [-p prompt] [-x px] [-y px] [-w px] [-l lines] [-fn name] [-fs pt] [-fw weight] < items");
 }
 
 int main(int argc, char **argv)
@@ -411,30 +413,57 @@ int main(int argc, char **argv)
     MSG msg;
     int prompt_w = 0;
 
-    for (int i = 1; i < argc; ++i) {
-        if (!strcmp(argv[i], "-help")) { usage(); return 0; }
-        if (!strcmp(argv[i], "-version")) { puts("version: 0.7"); return 0; }
-        if ((!strcmp(argv[i], "-enc") || !strcmp(argv[i], "-encoding")) && i + 1 < argc) {
-            char *enc = argv[++i];
-            if (!strcmp(enc, "ansi")) text_codepage = CP_ACP;
-            else if (!strcmp(enc, "oem")) text_codepage = CP_OEMCP;
-            else if (!strcmp(enc, "utf8") || !strcmp(enc, "utf-8")) text_codepage = CP_UTF8;
+    ARGBEGIN {
+    case 'h':
+        usage();
+        return 0;
+    case 'v':
+        puts("version: 0.8");
+        return 0;
+    case 'e': {
+        char *enc = EARGF(usage());
+        if (!strcmp(enc, "ansi")) text_codepage = CP_ACP;
+        else if (!strcmp(enc, "oem")) text_codepage = CP_OEMCP;
+        else if (!strcmp(enc, "utf8") || !strcmp(enc, "utf-8")) text_codepage = CP_UTF8;
+    } break;
+    case 'p': {
+        wchar_t *w = widen(EARGF(usage()));
+        has_prompt = true;
+        wcsncpy(prompt, w, 299);
+        prompt[299] = 0;
+        free(w);
+    } break;
+    case 'f': {
+        wchar_t *w;
+        if (argv[0][1] == 'n') {
+            argv[0]++;
+            w = widen(EARGF(usage()));
+            custom_font = true;
+            wcsncpy(font_name, w, LF_FACESIZE - 1);
+            font_name[LF_FACESIZE - 1] = 0;
+            free(w);
+        } else if (argv[0][1] == 's') {
+            argv[0]++;
+            custom_font = true;
+            font_size = atoi(EARGF(usage()));
+        } else if (argv[0][1] == 'w') {
+            argv[0]++;
+            custom_font = true;
+            font_weight = atoi(EARGF(usage()));
         }
-        else if ((!strcmp(argv[i], "-p") || !strcmp(argv[i], "-prompt")) && i + 1 < argc) { wchar_t *w = widen(argv[++i]); has_prompt = true; wcsncpy(prompt, w, 299); prompt[299] = 0; free(w); }
-        else if ((!strcmp(argv[i], "-fn") || !strcmp(argv[i], "-font")) && i + 1 < argc) { wchar_t *w = widen(argv[++i]); custom_font = true; wcsncpy(font_name, w, LF_FACESIZE - 1); font_name[LF_FACESIZE - 1] = 0; free(w); }
-        else if ((!strcmp(argv[i], "-fs") || !strcmp(argv[i], "-font-size")) && i + 1 < argc) { custom_font = true; font_size = atoi(argv[++i]); }
-        else if ((!strcmp(argv[i], "-fw") || !strcmp(argv[i], "-font-weight")) && i + 1 < argc) { custom_font = true; font_weight = atoi(argv[++i]); }
-        else if (!strcmp(argv[i], "-x") && i + 1 < argc) win_x = atoi(argv[++i]);
-        else if (!strcmp(argv[i], "-y") && i + 1 < argc) win_y = atoi(argv[++i]);
-        else if (!strcmp(argv[i], "-w") && i + 1 < argc) win_w = atoi(argv[++i]);
-        else if (!strcmp(argv[i], "-l") && i + 1 < argc) lines = atoi(argv[++i]);
-        else if (!strcmp(argv[i], "-c") || !strcmp(argv[i], "-center")) center_window = true;
-        else if (!strcmp(argv[i], "-multi")) multi_select = true;
-        else if (!strcmp(argv[i], "-vi")) vi_mode = true;
-        else if (!strcmp(argv[i], "-default-controls")) default_controls = true;
-        else if (!strcmp(argv[i], "-close-on-blur")) close_on_blur = true;
-        else if (!strcmp(argv[i], "-i")) ;
-    }
+    } break;
+    case 'x': win_x = atoi(EARGF(usage())); break;
+    case 'y': win_y = atoi(EARGF(usage())); break;
+    case 'w': win_w = atoi(EARGF(usage())); break;
+    case 'l': lines = atoi(EARGF(usage())); break;
+    case 'c': center_window = true; break;
+    case 'm': multi_select = true; break;
+    case 'V': vi_mode = true; break;
+    case 'd': default_controls = true; break;
+    case 'b': close_on_blur = true; break;
+    case 'i': break;
+    default: usage(); return 1;
+    } ARGEND;
 
     InitializeCriticalSection(&items_lock);
     stdin_pipe = !_isatty(_fileno(stdin));
