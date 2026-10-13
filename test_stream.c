@@ -17,6 +17,24 @@ static LRESULT CALLBACK TestWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
 int main(int argc, char **argv)
 {
+    FILE *input = tmpfile();
+    assert(input);
+    char long_row[8193];
+    memset(long_row, 'x', sizeof long_row - 1);
+    long_row[sizeof long_row - 1] = 0;
+    assert(fputs(long_row, input) >= 0);
+    assert(fputs("\r\nnext\r\npartial", input) >= 0);
+    rewind(input);
+    char *line = NULL;
+    size_t capacity = 0;
+    assert(read_line(input, &line, &capacity) == 1);
+    assert(!strcmp(line, long_row));
+    assert(read_line(input, &line, &capacity) == 1 && !strcmp(line, "next"));
+    assert(read_line(input, &line, &capacity) == 1 && !strcmp(line, "partial"));
+    assert(read_line(input, &line, &capacity) == 0);
+    free(line);
+    fclose(input);
+
     InitializeCriticalSection(&items_lock);
     INITCOMMONCONTROLSEX icc = { sizeof icc, ICC_PROGRESS_CLASS };
     assert(InitCommonControlsEx(&icc));
@@ -43,7 +61,14 @@ int main(int argc, char **argv)
     bool stress = argc > 1 && !strcmp(argv[1], "stress");
     ShowWindow(main_hwnd, SW_SHOWNOACTIVATE);
     ShowWindow(list_hwnd, SW_SHOWNOACTIVATE);
-    add_item("item-0");
+    assert(add_item("item-0"));
+    int saved_capacity = item_capacity;
+    char **saved_items = items;
+    item_count = item_capacity = INT_MAX;
+    assert(!add_item("overflow"));
+    assert(item_count == INT_MAX && items == saved_items);
+    item_count = 1;
+    item_capacity = saved_capacity;
     WndProc(main_hwnd, WM_STDIN_CHUNK, 0, 0);
     UpdateWindow(list_hwnd);
     assert(SendMessageW(list_hwnd, LB_GETCOUNT, 0, 0) == 1);
@@ -56,7 +81,7 @@ int main(int argc, char **argv)
             memset(buf + len, 'x', 2699 - len);
             buf[2699] = 0; /* About 155 MiB of line data in stress mode. */
         }
-        add_item(buf);
+        assert(add_item(buf));
     }
     refill_list("");
     assert(SendMessageW(list_hwnd, LB_GETCOUNT, 0, 0) == 60000);
@@ -93,7 +118,7 @@ int main(int argc, char **argv)
     location_count = location_cursor = 0;
     list_move(-2);
     list_move(5);
-    add_item("extra-row");
+    assert(add_item("extra-row"));
     input_done = false;
     WndProc(main_hwnd, WM_TIMER, TIMER_PROGRESS, 0); /* Partial batch before EOF. */
     input_done = true;
@@ -187,7 +212,7 @@ int main(int argc, char **argv)
     assert(!GetUpdateRect(list_hwnd, NULL, FALSE));
     SendMessageW(list_hwnd, LB_SETCURSEL, 59999, 0);
     int kept_top = (int)SendMessageW(list_hwnd, LB_GETTOPINDEX, 0, 0);
-    add_item("item-60000");
+    assert(add_item("item-60000"));
     refill_list("");
     assert(SendMessageW(list_hwnd, LB_GETCOUNT, 0, 0) == 60002);
     assert(SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0) == 59999);
@@ -198,7 +223,7 @@ int main(int argc, char **argv)
     refill_list("tail-special");
     search_step();
     input_done = false;
-    add_item("tail-special");
+    assert(add_item("tail-special"));
     while (search_pos < item_count) search_step();
     assert(match_count == 1 && matches[0] == 60002);
     input_done = true;

@@ -7,6 +7,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <io.h>
+#include <limits.h>
+#include <stdint.h>
 #include <wctype.h>
 
 #include "arg.h"
@@ -80,15 +82,35 @@ static char *text_encoded(HWND hwnd)
     return s;
 }
 
-static void add_item(const char *s)
+static bool add_item(const char *s)
 {
+    char *copy = _strdup(s ? s : "");
+    if (!copy) return false;
     EnterCriticalSection(&items_lock);
     if (item_count == item_capacity) {
-        item_capacity = item_capacity ? item_capacity * 2 : 1024;
-        items = (char **)realloc(items, sizeof(char *) * item_capacity);
+        if (item_capacity > INT_MAX / 2) {
+            LeaveCriticalSection(&items_lock);
+            free(copy);
+            return false;
+        }
+        int next = item_capacity ? item_capacity * 2 : 1024;
+        if ((size_t)next > SIZE_MAX / sizeof(*items)) {
+            LeaveCriticalSection(&items_lock);
+            free(copy);
+            return false;
+        }
+        char **grown = (char **)realloc(items, (size_t)next * sizeof(*items));
+        if (!grown) {
+            LeaveCriticalSection(&items_lock);
+            free(copy);
+            return false;
+        }
+        items = grown;
+        item_capacity = next;
     }
-    items[item_count++] = _strdup(s ? s : "");
+    items[item_count++] = copy;
     LeaveCriticalSection(&items_lock);
+    return true;
 }
 
 static void make_font(void)
@@ -111,21 +133,49 @@ static void set_font(HWND hwnd)
     if (ui_font && hwnd) SendMessageW(hwnd, WM_SETFONT, (WPARAM)ui_font, TRUE);
 }
 
+/* Read one complete line, growing the buffer rather than splitting long rows. */
+static int read_line(FILE *stream, char **line, size_t *capacity)
+{
+    size_t len = 0;
+    for (;;) {
+        if (*capacity - len < 2) {
+            if (*capacity > INT_MAX / 2) return -1;
+            size_t next = *capacity ? *capacity * 2 : 4096;
+            char *grown = (char *)realloc(*line, next);
+            if (!grown) return -1;
+            *line = grown;
+            *capacity = next;
+        }
+        if (!fgets(*line + len, (int)(*capacity - len), stream)) {
+            if (ferror(stream)) return -1;
+            if (!len) return 0;
+            break;
+        }
+        len += strlen(*line + len);
+        if (len && (*line)[len - 1] == '\n') break;
+    }
+    if (len && (*line)[len - 1] == '\n') --len;
+    if (len && (*line)[len - 1] == '\r') --len;
+    (*line)[len] = 0;
+    return 1;
+}
+
 static DWORD WINAPI read_stdin_thread(void *unused)
 {
-    char buf[4096];
-    int n = 0;
+    char *line = NULL;
+    size_t capacity = 0;
+    int n = 0, status;
     (void)unused;
-    while (fgets(buf, sizeof buf, stdin)) {
-        buf[strcspn(buf, "\r\n")] = 0;
-        if (*buf) {
-            add_item(buf);
+    while ((status = read_line(stdin, &line, &capacity)) > 0) {
+        if (*line) {
+            if (!add_item(line)) { status = -1; break; }
             if ((++n == 1 || n % CHUNK_LINES == 0) && !InterlockedExchange(&refresh_pending, 1))
                 PostMessageW(main_hwnd, WM_STDIN_CHUNK, 0, 0);
         }
     }
+    free(line);
     loading_items = false;
-    PostMessageW(main_hwnd, WM_STDIN_DONE, 0, 0);
+    PostMessageW(main_hwnd, WM_STDIN_DONE, status < 0, 0);
     return 0;
 }
 
@@ -293,7 +343,9 @@ static VOID WINAPI search_fiber_run(void *unused)
         for (; search_pos < end; ++search_pos) {
             if (!has_match(search_query, items[search_pos])) continue;
             if (match_count == match_capacity) {
+                if (match_capacity > INT_MAX / 2) { PostQuitMessage(1); search_pos = item_count; break; }
                 int next = match_capacity ? match_capacity * 2 : 1024;
+                if ((size_t)next > SIZE_MAX / sizeof(*matches)) { PostQuitMessage(1); search_pos = item_count; break; }
                 int *grown = (int *)realloc(matches, (size_t)next * sizeof(*matches));
                 if (!grown) { PostQuitMessage(1); search_pos = item_count; break; }
                 matches = grown;
@@ -387,8 +439,22 @@ static char *current_text(void)
 static void add_selection(void)
 {
     char *s = current_text();
-    if (!s || !*s) { free(s); return; }
-    selected = (char **)realloc(selected, sizeof(char *) * (selected_count + 1));
+    if (!s) { fputs("wmenu: out of memory selecting item\n", stderr); PostQuitMessage(1); return; }
+    if (!*s) { free(s); return; }
+    if (selected_count == INT_MAX || (size_t)(selected_count + 1) > SIZE_MAX / sizeof(*selected)) {
+        free(s);
+        fputs("wmenu: too many selections\n", stderr);
+        PostQuitMessage(1);
+        return;
+    }
+    char **grown = (char **)realloc(selected, sizeof(*selected) * (size_t)(selected_count + 1));
+    if (!grown) {
+        free(s);
+        fputs("wmenu: out of memory selecting item\n", stderr);
+        PostQuitMessage(1);
+        return;
+    }
+    selected = grown;
     selected[selected_count++] = s;
     SetWindowTextW(input_hwnd, L"");
     if (has_items) refill_list("");
@@ -396,12 +462,11 @@ static void add_selection(void)
 
 static void finish(void)
 {
+    char *s = input_hwnd ? current_text() : NULL;
+    if (input_hwnd && !s) { fputs("wmenu: out of memory accepting item\n", stderr); PostQuitMessage(1); return; }
     for (int i = 0; i < selected_count; ++i) printf("%s\n", selected[i]);
-    if (input_hwnd) {
-        char *s = current_text();
-        if (s && *s) fputs(s, stdout);
-        free(s);
-    }
+    if (s && *s) fputs(s, stdout);
+    free(s);
     PostQuitMessage(0);
 }
 
@@ -582,6 +647,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         }
         return 0;
     case WM_STDIN_DONE:
+        if (wp) { fputs("wmenu: failed to read stdin (I/O or memory error)\n", stderr); PostQuitMessage(1); return 0; }
         input_done = true;
         has_items = item_count > 0;
         KillTimer(hwnd, TIMER_PROGRESS);
@@ -705,6 +771,7 @@ int main(int argc, char **argv)
     } break;
     case 'p': {
         wchar_t *w = widen(EARGF(usage()));
+        if (!w) { fputs("wmenu: out of memory reading prompt\n", stderr); return 1; }
         has_prompt = true;
         wcsncpy(prompt, w, 299);
         prompt[299] = 0;
@@ -715,6 +782,7 @@ int main(int argc, char **argv)
         if (argv[0][1] == 'n') {
             argv[0]++;
             w = widen(EARGF(usage()));
+            if (!w) { fputs("wmenu: out of memory reading font name\n", stderr); return 1; }
             custom_font = true;
             wcsncpy(font_name, w, LF_FACESIZE - 1);
             font_name[LF_FACESIZE - 1] = 0;
@@ -803,7 +871,9 @@ int main(int argc, char **argv)
     SetFocus(input_hwnd);
     if (loading_items) {
         SetTimer(main_hwnd, TIMER_PROGRESS, 30, NULL);
-        CreateThread(NULL, 0, read_stdin_thread, NULL, 0, NULL);
+        HANDLE reader = CreateThread(NULL, 0, read_stdin_thread, NULL, 0, NULL);
+        if (!reader) { fputs("wmenu: cannot start stdin reader\n", stderr); return 1; }
+        CloseHandle(reader);
     }
     while (GetMessageW(&msg, NULL, 0, 0) > 0) {
         TranslateMessage(&msg);

@@ -14,9 +14,11 @@ Dependencies
 ------------
 External source is pulled with mor from requirements.ini:
 
-    bash C:/Users/bhara/Projects/mor/mor.sh .
+    bash /path/to/mor.sh .
 
-Currently this fetches fzy into deps/fzy. The build uses only fzy's matcher:
+This fetches fzy v1.1 into deps/fzy (requirements.ini pins the tag).
+For an existing checkout, remove deps/fzy before rerunning mor: mor does not
+update directories already present. The build uses only fzy's matcher:
 
     deps/fzy/src/match.c
     deps/fzy/src/match.h
@@ -80,7 +82,7 @@ Release checklist
 1. Run make, make test, and optionally make stress (about 155 MiB of synthetic
    rows; validates no-data ListBox navigation, full-file fiber search, and
    progress state). Run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File
-   test_pipe.ps1` to verify rows appear before pipe EOF. Run
+   test_pipe.ps1` to verify complete long rows appear before pipe EOF. Run
    `powershell.exe -NoProfile -ExecutionPolicy Bypass -File test_typing.ps1`
    to measure typing latency with 20,000 streamed rows and stdin still open.
 2. Check:
