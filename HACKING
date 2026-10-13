@@ -111,7 +111,9 @@ Known simplifications
   but holds no copies of line text. Search runs in a Win32 fiber on the UI
   thread, yields after each SEARCH_BATCH, and resumes through WM_SEARCH_STEP.
   It never yields while holding items_lock. The reader remains a separate
-  thread. Matching rows are indexed in source order (fzy subsequence matching,
+  thread. It publishes item_count with InterlockedIncrement after inserting a
+  row; UI count reads use loaded_count(), and item pointers are read under
+  items_lock. Matching rows are indexed in source order (fzy subsequence matching,
   not score-ranked). No silent row cap. LB_SETCOUNT is wrapped with redraw
   suppression: unchanged visible rows are not invalidated as the row count
   grows; only newly visible rows are, and those are painted immediately so

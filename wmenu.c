@@ -35,7 +35,8 @@ static int dpi = 96;
 #define S(px) MulDiv((px), dpi, 96)
 
 static char **items, **selected;
-static int item_count, item_capacity, selected_count;
+static volatile LONG item_count; /* Published after items[] is populated. */
+static int item_capacity, selected_count;
 static int *matches, match_count, match_capacity, search_pos;
 static char *search_query;
 struct location { char *query; int item; }; /* Source item IDs survive filtering. */
@@ -82,6 +83,11 @@ static char *text_encoded(HWND hwnd)
     return s;
 }
 
+static int loaded_count(void)
+{
+    return (int)InterlockedCompareExchange(&item_count, 0, 0);
+}
+
 static bool add_item(const char *s)
 {
     char *copy = _strdup(s ? s : "");
@@ -108,7 +114,8 @@ static bool add_item(const char *s)
         items = grown;
         item_capacity = next;
     }
-    items[item_count++] = copy;
+    items[item_count] = copy;
+    InterlockedIncrement(&item_count);
     LeaveCriticalSection(&items_lock);
     return true;
 }
@@ -174,7 +181,6 @@ static DWORD WINAPI read_stdin_thread(void *unused)
         }
     }
     free(line);
-    loading_items = false;
     PostMessageW(main_hwnd, WM_STDIN_DONE, status < 0, 0);
     return 0;
 }
@@ -185,7 +191,7 @@ static int row_item(int row)
     if (row < 0) return -1;
     if (search_query && *search_query)
         return row < match_count ? matches[row] : -1;
-    return row < item_count ? row : -1;
+    return row < loaded_count() ? row : -1;
 }
 
 static void truncate_locations(void)
@@ -281,7 +287,7 @@ static void visit_location(int delta)
 
 static void update_count(void)
 {
-    int count = search_query && *search_query ? match_count : item_count;
+    int count = search_query && *search_query ? match_count : loaded_count();
     int old_count = (int)SendMessageW(list_hwnd, LB_GETCOUNT, 0, 0);
     if (old_count == count) return;
     int selected = (int)SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0);
@@ -316,7 +322,8 @@ static void update_count(void)
 
 static void update_progress(void)
 {
-    bool searching = input_done && search_query && *search_query && search_pos < item_count;
+    int count = loaded_count();
+    bool searching = input_done && search_query && *search_query && search_pos < count;
     bool visible = !input_done || searching;
     if (visible != progress_visible) {
         ShowWindow(progress_hwnd, visible ? SW_SHOW : SW_HIDE);
@@ -326,7 +333,7 @@ static void update_progress(void)
     }
     if (searching)
         SendMessageW(progress_hwnd, PBM_SETPOS,
-                     item_count ? (int)(100LL * search_pos / item_count) : 100, 0);
+                     count ? (int)(100LL * search_pos / count) : 100, 0);
 }
 
 static void queue_search(void)
@@ -339,7 +346,8 @@ static VOID WINAPI search_fiber_run(void *unused)
     (void)unused;
     for (;;) {
         EnterCriticalSection(&items_lock);
-        int end = item_count < search_pos + SEARCH_BATCH ? item_count : search_pos + SEARCH_BATCH;
+        int remaining = item_count - search_pos;
+        int end = search_pos + (remaining < SEARCH_BATCH ? remaining : SEARCH_BATCH);
         for (; search_pos < end; ++search_pos) {
             if (!has_match(search_query, items[search_pos])) continue;
             if (match_count == match_capacity) {
@@ -360,7 +368,7 @@ static VOID WINAPI search_fiber_run(void *unused)
 
 static void search_step(void)
 {
-    if (!search_query || !*search_query || search_pos >= item_count) {
+    if (!search_query || !*search_query || search_pos >= loaded_count()) {
         KillTimer(main_hwnd, TIMER_SEARCH);
         return;
     }
@@ -368,7 +376,7 @@ static void search_step(void)
     update_count();
     restore_location();
     update_progress();
-    if (search_pos >= item_count) KillTimer(main_hwnd, TIMER_SEARCH);
+    if (search_pos >= loaded_count()) KillTimer(main_hwnd, TIMER_SEARCH);
     else if (HIWORD(GetQueueStatus(QS_INPUT)))
         SetTimer(main_hwnd, TIMER_SEARCH, 15, NULL); /* Let keyboard/mouse go first. */
     else queue_search();
@@ -417,7 +425,7 @@ static void refill_list(const char *query)
         UpdateWindow(list_hwnd);
         restore_location();
     }
-    if (*search_query && search_pos < item_count) queue_search();
+    if (*search_query && search_pos < loaded_count()) queue_search();
     else if (!*search_query) update_count();
     if (progress_hwnd) update_progress();
 }
@@ -649,7 +657,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_STDIN_DONE:
         if (wp) { fputs("wmenu: failed to read stdin (I/O or memory error)\n", stderr); PostQuitMessage(1); return 0; }
         input_done = true;
-        has_items = item_count > 0;
+        has_items = loaded_count() > 0;
         KillTimer(hwnd, TIMER_PROGRESS);
         if (list_hwnd) {
             char *q = text_encoded(input_hwnd);
