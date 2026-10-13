@@ -23,6 +23,7 @@
 #define WM_STDIN_CHUNK (WM_APP + 1)
 #define WM_STDIN_DONE (WM_APP + 2)
 #define LIST_LIMIT 1000
+#define SCAN_LIMIT 50000
 #define CHUNK_LINES 2048
 
 static int dpi = 96;
@@ -139,7 +140,8 @@ static void refill_list(const char *query)
             ++n;
         }
     } else {
-        for (int i = 0; i < item_count && n < LIST_LIMIT; ++i) {
+        int scan = item_count < SCAN_LIMIT ? item_count : SCAN_LIMIT;
+        for (int i = 0; i < scan && n < LIST_LIMIT; ++i) {
             if (has_match(query, items[i])) {
                 ranked[n].index = i;
                 ranked[n++].score = match(query, items[i]);

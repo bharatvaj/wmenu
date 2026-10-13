@@ -97,5 +97,6 @@ Known simplifications
 - The ListBox displays at most LIST_LIMIT rows. This keeps huge streams (for
   example 100MB+ logs) responsive instead of trying to shove every line into a
   Win32 list control.
-- Filtering stops after LIST_LIMIT matches. This intentionally favors staying
-  interactive over exhaustive ranking on massive inputs.
+- Filtering scans at most SCAN_LIMIT rows and stops after LIST_LIMIT matches.
+  This intentionally favors staying interactive over exhaustive ranking on
+  massive inputs.
