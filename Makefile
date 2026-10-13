@@ -13,6 +13,9 @@ test: test_stream.c wmenu.c arg.h deps/fzy/src/match.c deps/fzy/config.h deps/fz
 	cl test_stream.c deps/fzy/src/match.c /I deps/fzy/src $(CFLAGS) user32.lib comctl32.lib gdi32.lib /Fe:test_stream.exe
 	./test_stream.exe
 
+stress: test
+	./test_stream.exe stress
+
 deps/fzy/config.h: deps/fzy/src/config.def.h
 	printf '#include "src/config.def.h"\n' > deps/fzy/config.h
 

@@ -23,8 +23,8 @@
 #define TIMER_PROGRESS 201
 #define WM_STDIN_CHUNK (WM_APP + 1)
 #define WM_STDIN_DONE (WM_APP + 2)
-#define LIST_LIMIT 1000
-#define SCAN_LIMIT 50000
+#define WM_SEARCH_STEP (WM_APP + 3)
+#define SEARCH_BATCH 1024
 #define CHUNK_LINES 2048
 
 static int dpi = 96;
@@ -32,11 +32,14 @@ static int dpi = 96;
 
 static char **items, **selected;
 static int item_count, item_capacity, selected_count;
+static int *matches, match_count, match_capacity, search_pos;
+static char *search_query;
 static volatile LONG refresh_pending;
 static bool has_items, has_prompt, multi_select, vi_mode, normal_mode, default_controls;
 static wchar_t prompt[300];
 static HWND main_hwnd, input_hwnd, list_hwnd, progress_hwnd;
 static WNDPROC old_input_proc, old_list_proc;
+static LPVOID ui_fiber, search_fiber;
 static CRITICAL_SECTION items_lock;
 static int win_x = 0, win_y = 0, win_w = 0, win_h = 0, lines = 5;
 static int font_size = 0, font_weight = FW_NORMAL;
@@ -44,7 +47,8 @@ static UINT text_codepage = CP_UTF8;
 static wchar_t font_name[LF_FACESIZE];
 static HFONT ui_font;
 static bool custom_font;
-static bool center_window, close_on_blur, stdin_pipe, loading_items;
+static bool center_window, close_on_blur, stdin_pipe, loading_items, input_done, progress_visible;
+static volatile LONG search_pending;
 static int progress_pos, progress_dir = 5;
 char *argv0;
 
@@ -120,104 +124,106 @@ static DWORD WINAPI read_stdin_thread(void *unused)
     return 0;
 }
 
-struct ranked_item { int index; score_t score; };
-static int displayed[LIST_LIMIT], displayed_count;
-static bool displayed_filtered;
-
-static int rank_cmp(const void *a, const void *b)
+/* The ListBox stores only a count. Its row IDs map into items or matches. */
+static int row_item(int row)
 {
-    const struct ranked_item *x = (const struct ranked_item *)a, *y = (const struct ranked_item *)b;
-    return x->score < y->score ? 1 : x->score > y->score ? -1 : x->index - y->index;
+    if (row < 0) return -1;
+    if (search_query && *search_query)
+        return row < match_count ? matches[row] : -1;
+    return row < item_count ? row : -1;
+}
+
+static void update_count(void)
+{
+    int count = search_query && *search_query ? match_count : item_count;
+    if (SendMessageW(list_hwnd, LB_GETCOUNT, 0, 0) == count) return;
+    int selected = (int)SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0);
+    SendMessageW(list_hwnd, LB_SETCOUNT, count, 0);
+    if (count && selected < 0) SendMessageW(list_hwnd, LB_SETCURSEL, 0, 0);
+}
+
+static void update_progress(void)
+{
+    bool searching = input_done && search_query && *search_query && search_pos < item_count;
+    bool visible = !input_done || searching;
+    if (visible != progress_visible) {
+        ShowWindow(progress_hwnd, visible ? SW_SHOW : SW_HIDE);
+        SetWindowPos(list_hwnd, NULL, 0, S(28), win_w,
+                     win_h - S(28) - (visible ? S(10) : 0), SWP_NOZORDER);
+        progress_visible = visible;
+    }
+    if (searching)
+        SendMessageW(progress_hwnd, PBM_SETPOS,
+                     item_count ? (int)(100LL * search_pos / item_count) : 100, 0);
+}
+
+static void queue_search(void)
+{
+    if (!InterlockedExchange(&search_pending, 1))
+        PostMessageW(main_hwnd, WM_SEARCH_STEP, 0, 0);
+}
+
+static VOID WINAPI search_fiber_run(void *unused)
+{
+    (void)unused;
+    for (;;) {
+        EnterCriticalSection(&items_lock);
+        int end = item_count < search_pos + SEARCH_BATCH ? item_count : search_pos + SEARCH_BATCH;
+        for (; search_pos < end; ++search_pos) {
+            if (!has_match(search_query, items[search_pos])) continue;
+            if (match_count == match_capacity) {
+                int next = match_capacity ? match_capacity * 2 : 1024;
+                int *grown = (int *)realloc(matches, (size_t)next * sizeof(*matches));
+                if (!grown) { PostQuitMessage(1); search_pos = item_count; break; }
+                matches = grown;
+                match_capacity = next;
+            }
+            matches[match_count++] = search_pos;
+        }
+        LeaveCriticalSection(&items_lock);
+        SwitchToFiber(ui_fiber);  /* Never yield while holding items_lock. */
+    }
+}
+
+static void search_step(void)
+{
+    if (!search_query || !*search_query || search_pos >= item_count) return;
+    SwitchToFiber(search_fiber);
+    update_count();
+    update_progress();
+    if (search_pos < item_count) queue_search();
 }
 
 static void refill_list(const char *query)
 {
-    struct ranked_item ranked[LIST_LIMIT];
-    int n = 0, old_selection = (int)SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0);
-    int old_item = old_selection >= 0 && old_selection < displayed_count ? displayed[old_selection] : -1;
-    int old_top = (int)SendMessageW(list_hwnd, LB_GETTOPINDEX, 0, 0);
-    bool filtered = query && *query;
-    bool was_filtered = displayed_filtered;
-    EnterCriticalSection(&items_lock);
-    if (!filtered) {
-        if (was_filtered) {
-            SendMessageW(list_hwnd, WM_SETREDRAW, FALSE, 0);
-            SendMessageW(list_hwnd, LB_RESETCONTENT, 0, 0);
-            displayed_count = 0;
-            displayed_filtered = false;
-        }
-        /* Append only new rows. LB_ADDSTRING repaints affected rows itself. */
-        for (int i = displayed_count; i < item_count && i < LIST_LIMIT; ++i) {
-            wchar_t *w = widen(items[i]);
-            SendMessageW(list_hwnd, LB_ADDSTRING, 0, (LPARAM)w);
-            displayed[displayed_count++] = i;
-            free(w);
-        }
-        if (was_filtered) {
-            SendMessageW(list_hwnd, LB_SETCURSEL,
-                old_item >= 0 && old_item < displayed_count ? old_item : 0, 0);
-            SendMessageW(list_hwnd, WM_SETREDRAW, TRUE, 0);
-            InvalidateRect(list_hwnd, NULL, TRUE);
-        } else if (displayed_count && old_selection < 0) {
-            SendMessageW(list_hwnd, LB_SETCURSEL, 0, 0);
-        }
-    } else {
-        int scan = item_count < SCAN_LIMIT ? item_count : SCAN_LIMIT;
-        for (int i = 0; i < scan && n < LIST_LIMIT; ++i) {
-            if (has_match(query, items[i])) {
-                ranked[n].index = i;
-                ranked[n++].score = match(query, items[i]);
-            }
-        }
-        qsort(ranked, n, sizeof(*ranked), rank_cmp);
-        bool changed = !displayed_filtered || n != displayed_count;
-        for (int i = 0; !changed && i < n; ++i)
-            if (ranked[i].index != displayed[i]) changed = true;
-        if (changed) {
-            int selection = n ? 0 : -1;
-            SendMessageW(list_hwnd, WM_SETREDRAW, FALSE, 0);
-            SendMessageW(list_hwnd, LB_RESETCONTENT, 0, 0);
-            for (int i = 0; i < n; ++i) {
-                wchar_t *w = widen(items[ranked[i].index]);
-                displayed[i] = ranked[i].index;
-                SendMessageW(list_hwnd, LB_ADDSTRING, 0, (LPARAM)w);
-                if (displayed[i] == old_item) selection = i;
-                free(w);
-            }
-            displayed_count = n;
-            displayed_filtered = true;
-            if (selection >= 0) SendMessageW(list_hwnd, LB_SETCURSEL, selection, 0);
-            if (old_top > 0 && selection >= 0 && old_item >= 0 && displayed[selection] == old_item)
-                SendMessageW(list_hwnd, LB_SETTOPINDEX, old_top, 0);
-            SendMessageW(list_hwnd, WM_SETREDRAW, TRUE, 0);
-            InvalidateRect(list_hwnd, NULL, TRUE);
-        }
+    if (!query) return;
+    if (!search_query || strcmp(query, search_query)) {
+        char *copy = _strdup(query);
+        if (!copy) return;
+        free(search_query);
+        search_query = copy;
+        match_count = 0;
+        search_pos = 0;
+        if (*search_query) SendMessageW(list_hwnd, LB_SETCOUNT, 0, 0);
+        else update_count();
     }
-    LeaveCriticalSection(&items_lock);
+    if (*search_query && search_pos < item_count) queue_search();
+    else if (!*search_query) update_count();
+    if (progress_hwnd) update_progress();
 }
 
 static char *current_text(void)
 {
-    wchar_t *w;
-    int n, m;
-    char *s;
-    LRESULT sel = list_hwnd ? SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0) : LB_ERR;
-    if (has_items && sel != LB_ERR) {
-        n = (int)SendMessageW(list_hwnd, LB_GETTEXTLEN, sel, 0) + 1;
-        w = (wchar_t *)calloc(n, sizeof(wchar_t));
-        if (!w) return NULL;
-        SendMessageW(list_hwnd, LB_GETTEXT, sel, (LPARAM)w);
-    } else {
-        n = GetWindowTextLengthW(input_hwnd) + 1;
-        w = (wchar_t *)calloc(n, sizeof(wchar_t));
-        if (!w) return NULL;
-        GetWindowTextW(input_hwnd, w, n);
+    int sel = list_hwnd ? (int)SendMessageW(list_hwnd, LB_GETCURSEL, 0, 0) : -1;
+    if (has_items && sel >= 0) {
+        char *s = NULL;
+        EnterCriticalSection(&items_lock);
+        int index = row_item(sel);
+        if (index >= 0 && index < item_count) s = _strdup(items[index]);
+        LeaveCriticalSection(&items_lock);
+        return s;
     }
-    m = WideCharToMultiByte(text_codepage, 0, w, -1, NULL, 0, NULL, NULL);
-    s = (char *)calloc(m ? m : 1, 1);
-    if (s) WideCharToMultiByte(text_codepage, 0, w, -1, s, m, NULL, NULL);
-    free(w);
-    return s;
+    return text_encoded(input_hwnd);
 }
 
 static void add_selection(void)
@@ -387,30 +393,69 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     switch (msg) {
     case WM_STDIN_CHUNK:
         InterlockedExchange(&refresh_pending, 0);
-        if (list_hwnd && loading_items) {
+        if (list_hwnd) {
             char *q = text_encoded(input_hwnd);
             if (q) refill_list(q);
             free(q);
         }
         return 0;
     case WM_STDIN_DONE:
+        input_done = true;
         has_items = item_count > 0;
         KillTimer(hwnd, TIMER_PROGRESS);
-        if (progress_hwnd) ShowWindow(progress_hwnd, SW_HIDE);
         if (list_hwnd) {
             char *q = text_encoded(input_hwnd);
-            SetWindowPos(list_hwnd, NULL, 0, S(28), win_w, win_h - S(28), SWP_NOZORDER);
             if (q) refill_list(q);
             free(q);
+            update_progress();
         }
         return 0;
+    case WM_SEARCH_STEP:
+        InterlockedExchange(&search_pending, 0);
+        search_step();
+        return 0;
     case WM_TIMER:
-        if (wp == TIMER_PROGRESS && progress_hwnd) {
+        if (wp == TIMER_PROGRESS && progress_hwnd && !input_done) {
             progress_pos += progress_dir;
             if (progress_pos >= 100 || progress_pos <= 0) progress_dir = -progress_dir;
             SendMessageW(progress_hwnd, PBM_SETPOS, progress_pos, 0);
         }
         return 0;
+    case WM_MEASUREITEM: {
+        MEASUREITEMSTRUCT *measure = (MEASUREITEMSTRUCT *)lp;
+        if (measure->CtlID != ID_COMBO) break;
+        HDC dc = GetDC(hwnd);
+        HFONT old = (HFONT)SelectObject(dc, ui_font);
+        TEXTMETRICW tm;
+        GetTextMetricsW(dc, &tm);
+        SelectObject(dc, old);
+        ReleaseDC(hwnd, dc);
+        measure->itemHeight = tm.tmHeight + S(4);
+        return TRUE;
+    }
+    case WM_DRAWITEM: {
+        DRAWITEMSTRUCT *draw = (DRAWITEMSTRUCT *)lp;
+        if (draw->CtlID != ID_COMBO || draw->itemID == (UINT)-1) break;
+        bool selected_row = (draw->itemState & ODS_SELECTED) != 0;
+        FillRect(draw->hDC, &draw->rcItem,
+                 GetSysColorBrush(selected_row ? COLOR_HIGHLIGHT : COLOR_WINDOW));
+        EnterCriticalSection(&items_lock);
+        int index = row_item((int)draw->itemID);
+        wchar_t *w = index >= 0 && index < item_count ? widen(items[index]) : NULL;
+        LeaveCriticalSection(&items_lock);
+        if (w) {
+            HFONT old = (HFONT)SelectObject(draw->hDC, ui_font);
+            SetBkMode(draw->hDC, TRANSPARENT);
+            SetTextColor(draw->hDC, GetSysColor(selected_row ? COLOR_HIGHLIGHTTEXT : COLOR_WINDOWTEXT));
+            RECT rect = draw->rcItem;
+            rect.left += S(4);
+            DrawTextW(draw->hDC, w, -1, &rect, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
+            SelectObject(draw->hDC, old);
+            free(w);
+        }
+        if (draw->itemState & ODS_FOCUS) DrawFocusRect(draw->hDC, &draw->rcItem);
+        return TRUE;
+    }
     case WM_COMMAND:
         if (LOWORD(wp) == ID_LABEL) return 0;
         if (LOWORD(wp) == ID_EDIT && HIWORD(wp) == EN_CHANGE && has_items) {
@@ -505,6 +550,7 @@ int main(int argc, char **argv)
 
     InitializeCriticalSection(&items_lock);
     stdin_pipe = !_isatty(_fileno(stdin));
+    input_done = !stdin_pipe;
     if (stdin_pipe) { has_items = true; loading_items = true; }
 
     SetProcessDPIAware();
@@ -539,10 +585,11 @@ int main(int argc, char **argv)
     if (has_items) {
         input_hwnd = CreateWindowW(WC_EDITW, L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL, prompt_w, S(2), win_w - prompt_w, S(24), main_hwnd, (HMENU)ID_EDIT, inst, NULL);
         set_font(input_hwnd);
-        list_hwnd = CreateWindowW(WC_LISTBOXW, L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | WS_VSCROLL, 0, S(28), win_w, win_h - S(28) - (loading_items ? S(10) : 0), main_hwnd, (HMENU)ID_COMBO, inst, NULL);
+        list_hwnd = CreateWindowW(WC_LISTBOXW, L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | LBS_NODATA | LBS_OWNERDRAWFIXED | WS_VSCROLL, 0, S(28), win_w, win_h - S(28) - (loading_items ? S(10) : 0), main_hwnd, (HMENU)ID_COMBO, inst, NULL);
         set_font(list_hwnd);
         old_list_proc = (WNDPROC)SetWindowLongPtrW(list_hwnd, GWLP_WNDPROC, (LONG_PTR)ListProc);
         progress_hwnd = CreateWindowW(PROGRESS_CLASSW, L"", WS_CHILD | (loading_items ? WS_VISIBLE : 0), 0, win_h - S(10), win_w, S(10), main_hwnd, (HMENU)ID_PROGRESS, inst, NULL);
+        progress_visible = loading_items;
         SendMessageW(progress_hwnd, PBM_SETRANGE, 0, MAKELPARAM(0, 100));
         if (!loading_items) refill_list("");
     } else {
@@ -550,6 +597,12 @@ int main(int argc, char **argv)
         set_font(input_hwnd);
     }
     old_input_proc = (WNDPROC)SetWindowLongPtrW(input_hwnd, GWLP_WNDPROC, (LONG_PTR)InputProc);
+    if (has_items) {
+        ui_fiber = ConvertThreadToFiber(NULL);
+        if (!ui_fiber) return 1;
+        search_fiber = CreateFiber(0, search_fiber_run, NULL);
+        if (!search_fiber) { ConvertFiberToThread(); return 1; }
+    }
 
     ShowWindow(main_hwnd, SW_SHOW);
     UpdateWindow(main_hwnd);
@@ -562,5 +615,9 @@ int main(int argc, char **argv)
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
-    return 0;
+    if (search_fiber) {
+        DeleteFiber(search_fiber);
+        ConvertFiberToThread();
+    }
+    return (int)msg.wParam;
 }
