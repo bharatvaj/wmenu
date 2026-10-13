@@ -1,6 +1,11 @@
 wmenu
 =====
 
+WARNING: AI-GENERATED CODEBASE
+------------------------------
+This AI-generated version needs human review, testing, and maintenance.
+It is stable enough for everyday use, but not independently audited.
+
 A small Win32 picker for newline-separated input. Inspired by LinArcX's
 original wmenu: https://github.com/LinArcX/wmenu
 
