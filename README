@@ -1,0 +1,61 @@
+wmenu
+=====
+
+A small Win32 picker for newline-separated input. Inspired by LinArcX's
+original wmenu: https://github.com/LinArcX/wmenu
+
+Build
+-----
+Use a Visual Studio Developer Command Prompt and run make.
+
+How it works
+------------
+wmenu is a GUI filter: newline-separated stdin goes in, the selected line is printed to stdout.
+
+Examples:
+
+```
+dir /b | .\wmenu.exe
+where.exe *.exe | .\wmenu.exe -p run:
+dir /b | .\wmenu.exe -c -w 800 -l 12
+```
+
+Useful flags:
+
+```
+-p text             prompt text
+-enc utf8|ansi|oem  stdin/stdout/prompt encoding; default utf8
+-x px -y px -w px   position and width
+-c / -center        center window
+-l lines            visible list lines
+-multi              select multiple entries; Ctrl+Enter adds one
+-vi                 enable vi support; Ctrl+Alt+V toggles vi mode
+-default-controls   use normal Windows edit shortcuts instead of emacs-ish keys
+-close-on-blur      exit when focus leaves the window
+-fn name -fs pt -fw weight
+                    font face, size, and weight
+-version            print version
+-help               print usage
+```
+
+Default keys:
+
+```
+Enter       print selection and exit
+Esc         exit
+Up/Down     move list selection
+Ctrl+N/P    next/previous item
+Ctrl+D/U    page down/up
+Ctrl+A      move to start; press again at start to select all
+Ctrl+E      move to end
+Ctrl+K      delete to end
+Ctrl+W      cut selection
+Ctrl+Backspace delete previous word
+Ctrl+Alt+V  toggle vi mode
+```
+
+See HACKING for code layout and release notes.
+
+License
+-------
+BSD 3-Clause; see LICENSE. arg.h is MIT/X Consortium licensed.

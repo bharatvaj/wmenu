@@ -1,0 +1,13 @@
+*.*user
+x64/*
+/.vs/*
+build/*
+Debug/*
+Release/*
+/garbage
+wmenu.vcxproj.user
+*.obj
+*.exe
+mor.log
+deps/
+*.manifest

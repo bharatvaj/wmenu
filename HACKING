@@ -1,0 +1,100 @@
+wmenu hacking notes
+===================
+
+Goal
+----
+wmenu is a small Win32 dmenu-style picker. Keep it boring: one C file, native
+controls, stdin in, stdout out.
+
+Build
+-----
+    make
+
+Dependencies
+------------
+External source is pulled with mor from requirements.ini:
+
+    bash C:/Users/bhara/Projects/mor/mor.sh .
+
+Currently this fetches fzy into deps/fzy. The build uses only fzy's matcher:
+
+    deps/fzy/src/match.c
+    deps/fzy/src/match.h
+
+Makefile generates two tiny compatibility files inside deps/ when needed:
+
+    deps/fzy/config.h
+    deps/fzy/src/strings.h
+
+Program shape
+-------------
+Important sections in wmenu.c:
+
+- input/output conversion: widen(), text_encoded(), current_text()
+- stdin loading: read_stdin_thread()
+- matching/list population: refill_list()
+- selection/output: add_selection(), finish()
+- key modes:
+  - handle_global_keys()
+  - handle_emacs_keys()
+  - handle_vi_keys()
+- Win32 plumbing:
+  - InputProc()
+  - ListProc()
+  - WndProc()
+  - main()
+
+Detachable modes
+----------------
+The key modes are intentionally isolated. To remove a mode:
+
+- Emacs keys: delete handle_emacs_keys() and its call from InputProc().
+- Vi keys: delete handle_vi_keys() and the Ctrl+Alt+V toggle in
+  handle_emacs_keys().
+- Default Windows controls: pass -default-controls at runtime.
+
+Keep global keys tiny. Enter, Esc, Up/Down, and multi-select belong in
+handle_global_keys(). Editing policy belongs in a mode handler.
+
+Current key policy
+------------------
+Default mode is emacs-ish, but pragmatic:
+
+- Ctrl+A: first press moves to start; second press at start selects all
+- Ctrl+E: end
+- Ctrl+K: delete to end
+- Ctrl+Backspace: delete previous word
+- Ctrl+N / Ctrl+P: next/previous list item
+- Ctrl+D / Ctrl+U: page down/up list
+- Ctrl+W: cut selection
+- Ctrl+Alt+V: toggle vi mode
+- Esc: exit
+
+Use -default-controls for normal Windows edit behavior.
+
+Release checklist
+-----------------
+1. Run make.
+2. Check:
+       .\\wmenu.exe -help
+       .\\wmenu.exe -version
+       dir /b | .\\wmenu.exe
+3. Check a slow pipe shows the progress bar.
+4. Check Alt-Tab back focuses the input.
+5. Check Esc exits from input and list focus.
+6. Update the version string in wmenu.c.
+7. Do not commit build outputs (*.obj, *.exe) unless intentionally packaging.
+
+HiDPI/layout
+------------
+Pixel constants in wmenu.c should go through `S(px)`, which scales from the
+system DPI. Do not add new raw layout numbers unless they are not pixels.
+
+Known simplifications
+---------------------
+- Default input/output encoding is UTF-8. Use `-enc ansi` or `-enc oem` for
+  legacy Windows pipes such as classic `cmd.exe` output.
+- List filtering rebuilds the whole ListBox on every edit. That is fine for
+  normal launcher-sized lists. Optimize only with measured pain.
+- Stdin is loaded on a background thread, then the list is populated once done.
+  Incremental display can be added later if huge/slow streams matter.
