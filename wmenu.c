@@ -19,14 +19,18 @@
 #define ID_EDIT 102
 #define ID_LABEL 103
 #define ID_PROGRESS 104
+#define TIMER_PROGRESS 201
 #define WM_STDIN_CHUNK (WM_APP + 1)
 #define WM_STDIN_DONE (WM_APP + 2)
+#define LIST_LIMIT 1000
+#define CHUNK_LINES 2048
 
 static int dpi = 96;
 #define S(px) MulDiv((px), dpi, 96)
 
 static char **items, **selected;
-static int item_count, selected_count;
+static int item_count, item_capacity, selected_count;
+static volatile LONG refresh_pending;
 static bool has_items, has_prompt, multi_select, vi_mode, normal_mode, default_controls;
 static wchar_t prompt[300];
 static HWND main_hwnd, input_hwnd, list_hwnd, progress_hwnd;
@@ -39,6 +43,7 @@ static wchar_t font_name[LF_FACESIZE];
 static HFONT ui_font;
 static bool custom_font;
 static bool center_window, close_on_blur, stdin_pipe, loading_items;
+static int progress_pos, progress_dir = 5;
 
 static wchar_t *widen(const char *s)
 {
@@ -66,7 +71,10 @@ static char *text_encoded(HWND hwnd)
 static void add_item(const char *s)
 {
     EnterCriticalSection(&items_lock);
-    items = (char **)realloc(items, sizeof(char *) * (item_count + 1));
+    if (item_count == item_capacity) {
+        item_capacity = item_capacity ? item_capacity * 2 : 1024;
+        items = (char **)realloc(items, sizeof(char *) * item_capacity);
+    }
     items[item_count++] = _strdup(s ? s : "");
     LeaveCriticalSection(&items_lock);
 }
@@ -100,7 +108,8 @@ static DWORD WINAPI read_stdin_thread(void *unused)
         buf[strcspn(buf, "\r\n")] = 0;
         if (*buf) {
             add_item(buf);
-            if (++n == 1 || n % 16 == 0) PostMessageW(main_hwnd, WM_STDIN_CHUNK, 0, 0);
+            if ((++n == 1 || n % CHUNK_LINES == 0) && !InterlockedExchange(&refresh_pending, 1))
+                PostMessageW(main_hwnd, WM_STDIN_CHUNK, 0, 0);
         }
     }
     loading_items = false;
@@ -118,26 +127,33 @@ static int rank_cmp(const void *a, const void *b)
 
 static void refill_list(const char *query)
 {
-    struct ranked_item *ranked;
+    struct ranked_item ranked[LIST_LIMIT];
     int n = 0;
-    EnterCriticalSection(&items_lock);
-    ranked = (struct ranked_item *)calloc(item_count, sizeof(*ranked));
     SendMessageW(list_hwnd, LB_RESETCONTENT, 0, 0);
-    for (int i = 0; i < item_count; ++i) {
-        if (!query || !*query || has_match(query, items[i])) {
-            ranked[n].index = i;
-            ranked[n++].score = query && *query ? match(query, items[i]) : 0;
+    EnterCriticalSection(&items_lock);
+    if (!query || !*query) {
+        for (int i = 0; i < item_count && n < LIST_LIMIT; ++i) {
+            wchar_t *w = widen(items[i]);
+            SendMessageW(list_hwnd, LB_ADDSTRING, 0, (LPARAM)w);
+            free(w);
+            ++n;
         }
-    }
-    qsort(ranked, n, sizeof(*ranked), rank_cmp);
-    for (int i = 0; i < n; ++i) {
-        wchar_t *w = widen(items[ranked[i].index]);
-        SendMessageW(list_hwnd, LB_ADDSTRING, 0, (LPARAM)w);
-        free(w);
+    } else {
+        for (int i = 0; i < item_count && n < LIST_LIMIT; ++i) {
+            if (has_match(query, items[i])) {
+                ranked[n].index = i;
+                ranked[n++].score = match(query, items[i]);
+            }
+        }
+        qsort(ranked, n, sizeof(*ranked), rank_cmp);
+        for (int i = 0; i < n; ++i) {
+            wchar_t *w = widen(items[ranked[i].index]);
+            SendMessageW(list_hwnd, LB_ADDSTRING, 0, (LPARAM)w);
+            free(w);
+        }
     }
     LeaveCriticalSection(&items_lock);
     if (n) SendMessageW(list_hwnd, LB_SETCURSEL, 0, 0);
-    free(ranked);
 }
 
 static char *current_text(void)
@@ -330,6 +346,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     switch (msg) {
     case WM_STDIN_CHUNK:
+        InterlockedExchange(&refresh_pending, 0);
         if (list_hwnd && loading_items) {
             char *q = text_encoded(input_hwnd);
             refill_list(q);
@@ -338,10 +355,18 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_STDIN_DONE:
         has_items = item_count > 0;
+        KillTimer(hwnd, TIMER_PROGRESS);
         if (progress_hwnd) ShowWindow(progress_hwnd, SW_HIDE);
         if (list_hwnd) {
             SetWindowPos(list_hwnd, NULL, 0, S(28), win_w, win_h - S(28), SWP_NOZORDER);
             refill_list("");
+        }
+        return 0;
+    case WM_TIMER:
+        if (wp == TIMER_PROGRESS && progress_hwnd) {
+            progress_pos += progress_dir;
+            if (progress_pos >= 100 || progress_pos <= 0) progress_dir = -progress_dir;
+            SendMessageW(progress_hwnd, PBM_SETPOS, progress_pos, 0);
         }
         return 0;
     case WM_COMMAND:
@@ -445,11 +470,11 @@ int main(int argc, char **argv)
     if (has_items) {
         input_hwnd = CreateWindowW(WC_EDITW, L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL, prompt_w, S(2), win_w - prompt_w, S(24), main_hwnd, (HMENU)ID_EDIT, inst, NULL);
         set_font(input_hwnd);
-        list_hwnd = CreateWindowW(WC_LISTBOXW, L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | WS_VSCROLL, 0, S(28), win_w, win_h - S(28) - (loading_items ? S(6) : 0), main_hwnd, (HMENU)ID_COMBO, inst, NULL);
+        list_hwnd = CreateWindowW(WC_LISTBOXW, L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | WS_VSCROLL, 0, S(28), win_w, win_h - S(28) - (loading_items ? S(10) : 0), main_hwnd, (HMENU)ID_COMBO, inst, NULL);
         set_font(list_hwnd);
         old_list_proc = (WNDPROC)SetWindowLongPtrW(list_hwnd, GWLP_WNDPROC, (LONG_PTR)ListProc);
-        progress_hwnd = CreateWindowW(PROGRESS_CLASSW, L"", WS_CHILD | (loading_items ? WS_VISIBLE : 0) | PBS_MARQUEE, 0, win_h - S(6), win_w, S(6), main_hwnd, (HMENU)ID_PROGRESS, inst, NULL);
-        SendMessageW(progress_hwnd, PBM_SETMARQUEE, TRUE, 30);
+        progress_hwnd = CreateWindowW(PROGRESS_CLASSW, L"", WS_CHILD | (loading_items ? WS_VISIBLE : 0), 0, win_h - S(10), win_w, S(10), main_hwnd, (HMENU)ID_PROGRESS, inst, NULL);
+        SendMessageW(progress_hwnd, PBM_SETRANGE, 0, MAKELPARAM(0, 100));
         if (!loading_items) refill_list("");
     } else {
         input_hwnd = CreateWindowW(WC_EDITW, L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL, prompt_w, S(2), win_w - prompt_w, S(24), main_hwnd, (HMENU)ID_EDIT, inst, NULL);
@@ -460,7 +485,10 @@ int main(int argc, char **argv)
     ShowWindow(main_hwnd, SW_SHOW);
     UpdateWindow(main_hwnd);
     SetFocus(input_hwnd);
-    if (loading_items) CreateThread(NULL, 0, read_stdin_thread, NULL, 0, NULL);
+    if (loading_items) {
+        SetTimer(main_hwnd, TIMER_PROGRESS, 30, NULL);
+        CreateThread(NULL, 0, read_stdin_thread, NULL, 0, NULL);
+    }
     while (GetMessageW(&msg, NULL, 0, 0) > 0) {
         TranslateMessage(&msg);
         DispatchMessageW(&msg);

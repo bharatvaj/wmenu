@@ -79,7 +79,7 @@ Release checklist
        .\\wmenu.exe -help
        .\\wmenu.exe -version
        dir /b | .\\wmenu.exe
-3. Check a slow pipe shows the progress bar.
+3. Check a slow pipe shows the bottom progress bar animating.
 4. Check Alt-Tab back focuses the input.
 5. Check Esc exits from input and list focus.
 6. Update the version string in wmenu.c.
@@ -94,7 +94,8 @@ Known simplifications
 ---------------------
 - Default input/output encoding is UTF-8. Use `-enc ansi` or `-enc oem` for
   legacy Windows pipes such as classic `cmd.exe` output.
-- List filtering rebuilds the whole ListBox on every edit. That is fine for
-  normal launcher-sized lists. Optimize only with measured pain.
-- Stdin is loaded on a background thread, then the list is populated once done.
-  Incremental display can be added later if huge/slow streams matter.
+- The ListBox displays at most LIST_LIMIT rows. This keeps huge streams (for
+  example 100MB+ logs) responsive instead of trying to shove every line into a
+  Win32 list control.
+- Filtering stops after LIST_LIMIT matches. This intentionally favors staying
+  interactive over exhaustive ranking on massive inputs.
