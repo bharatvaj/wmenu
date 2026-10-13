@@ -3,75 +3,86 @@ wmenu
 
 WARNING: AI-GENERATED CODEBASE
 ------------------------------
-This AI-generated version needs human review, testing, and maintenance.
-It is stable enough for everyday use, but not independently audited.
+This codebase is AI-generated and requires a human touch: review, testing,
+and maintenance. It is stable enough for everyday use, but has not received
+an independent human audit.
 
-A small Win32 picker for newline-separated input. Inspired by LinArcX's
-original wmenu: https://github.com/LinArcX/wmenu
+About
+-----
+wmenu is a small Win32 picker for newline-separated input. Pipe text into
+it, search the lines, and print the selected line to standard output. Input
+can keep arriving while the window is open; the list and search cover all
+loaded lines without drawing every row at once.
+
+This is a hard fork inspired by LinArcX's original wmenu. This implementation
+was written separately; the project name and idea come from LinArcX, not the
+code in this fork. See Credits below.
 
 Build
 -----
-Use a Visual Studio Developer Command Prompt and run make.
+On Windows, install Visual Studio Build Tools with the C compiler and GNU
+make. Open a Developer Command Prompt in this directory, then run:
+
+    make
+    make test
+
+For the larger synthetic-input test, run `make stress`. The build is defined
+in Makefile; no Visual Studio project or batch launcher is needed. See
+HACKING for development notes.
+
+Use
+---
+    dir /b | .\wmenu.exe
+    where.exe *.exe | .\wmenu.exe -p run:
+    dir /b | .\wmenu.exe -c -w 800 -l 12
+
+Options
+-------
+    -p text             prompt text
+    -e utf8|ansi|oem    input/output encoding (default: utf8)
+    -x px -y px -w px   position and width
+    -c                  center the window
+    -l lines            visible rows; -l-1 fills the screen (default: 5)
+    -m                  multi-select (Ctrl+Enter adds; Enter finishes)
+    -i                  ASCII case-insensitive matching
+    -V                  vi mode; Ctrl+Alt+V toggles it
+    -d                  native Windows edit shortcuts
+    -b                  close when focus is lost
+    -fn name -fs pt -fw weight
+                        font face, size, and weight
+    -v                  version
+    -h                  help
+
+Keys
+----
+    Enter               print selection and exit
+    Esc                 exit (vi insert mode: return to normal mode)
+    Up/Down             move selection
+    Ctrl+N/P            next/previous row
+    Ctrl+D/U            page down/up
+    Ctrl+O/I            back/forward through visited searches and rows
+    Ctrl+A/E            start/end of input
+    Ctrl+K              delete to end of input
+    Ctrl+W              cut selection
+    Ctrl+Backspace      delete previous word
+    Ctrl+Alt+V          toggle vi mode
+
+Clearing the query returns to the first row. Location history keeps the
+latest 128 searches and row positions.
 
 Credits
 -------
-Original wmenu by LinArcX; thanks for the inspiration.
-This is a hard fork with a separate Win32 implementation.
+LinArcX created the original wmenu and inspired this hard fork:
+    https://github.com/LinArcX/wmenu
 
-How it works
-------------
-wmenu is a GUI filter: newline-separated stdin goes in, the selected line is printed to stdout.
+The picker follows the dmenu interface from suckless:
+    https://tools.suckless.org/dmenu/
 
-Examples:
-
-```
-dir /b | .\wmenu.exe
-where.exe *.exe | .\wmenu.exe -p run:
-dir /b | .\wmenu.exe -c -w 800 -l 12
-```
-
-Useful flags:
-
-```
--p text             prompt text
--e utf8|ansi|oem    stdin/stdout/prompt encoding; default utf8
--x px -y px -w px   position and width
--c                  center window
--l lines            visible list lines; -l-1 fills the screen (default 5)
--m                  select multiple entries; Ctrl+Enter adds one, Enter finishes
--i                  ignore ASCII case while matching
--V                  enable vi support; Ctrl+Alt+V toggles vi mode
--d                  use normal Windows edit shortcuts instead of emacs-ish keys
--b                  exit when focus leaves the window
--fn name -fs pt -fw weight
-                    font face, size, and weight
--v                  print version
--h                  print usage
-```
-
-Clearing the search returns to the first row. Ctrl+O/I revisits previous
-searches and selected lines; typing/refining one search is treated as one
-location. History keeps the latest 128 positions.
-
-Default keys:
-
-```
-Enter       print selection and exit
-Esc         exit (vi insert mode: return to normal mode)
-Up/Down     move list selection
-Ctrl+N/P    next/previous item
-Ctrl+D/U    page down/up
-Ctrl+O/I    back/forward through visited searches and rows
-Ctrl+A      move to start; press again at start to select all
-Ctrl+E      move to end
-Ctrl+K      delete to end
-Ctrl+W      cut selection
-Ctrl+Backspace delete previous word
-Ctrl+Alt+V  toggle vi mode
-```
-
-See HACKING for code layout and release notes.
+arg.h is the suckless argument-parsing header by 20h. Its original header
+is left intact; the MIT/X Consortium terms are included in LICENSE.
 
 License
 -------
-BSD 3-Clause; see LICENSE. arg.h is MIT/X Consortium licensed.
+This fork's code is BSD 3-Clause licensed; see LICENSE. The third-party arg.h
+is MIT/X Consortium licensed; its notice is included in LICENSE. Older
+upstream releases and histories have their own copyright and licensing terms.
