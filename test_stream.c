@@ -17,6 +17,9 @@ static LRESULT CALLBACK TestWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
 int main(int argc, char **argv)
 {
+    assert(fit_lines(INT_MAX, 300) == 12);
+    assert(fit_lines(0, 300) == 5);
+    assert(fit_lines(7, 35) == 1);
     assert(has_match("aC", "ABC"));
     assert(!has_match("Ab", "abc")); /* Preserve fzy's ASCII query casing. */
     assert(has_match("\xc3\xa9", "caf\xc3\xa9"));

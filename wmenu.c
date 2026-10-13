@@ -766,6 +766,15 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
+static int fit_lines(int requested, int screen_height)
+{
+    int row_height = S(22);
+    int fit = row_height > 0 && screen_height > S(28) ? (screen_height - S(28)) / row_height : 1;
+    if (fit < 1) fit = 1;
+    if (requested < 1) requested = 5;
+    return requested < fit ? requested : fit;
+}
+
 static void usage(void)
 {
     puts("usage: wmenu [-chimbdVv] [-e utf8|ansi|oem] [-p prompt] [-x px] [-y px] [-w px] [-l lines] [-fn name] [-fs pt] [-fw weight] < items");
@@ -845,7 +854,8 @@ int main(int argc, char **argv)
     InitCommonControlsEx(&icc);
     make_font();
     if (!win_w) win_w = GetSystemMetrics(SM_CXSCREEN);
-    win_h = has_items ? S(28) + (lines > 0 ? lines : 5) * S(22) : S(28);
+    lines = fit_lines(lines, GetSystemMetrics(SM_CYSCREEN));
+    win_h = has_items ? S(28) + lines * S(22) : S(28);
     if (center_window) {
         win_x = (GetSystemMetrics(SM_CXSCREEN) - win_w) / 2;
         win_y = (GetSystemMetrics(SM_CYSCREEN) - win_h) / 2;
